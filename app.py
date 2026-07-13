@@ -10,14 +10,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS to hide Streamlit UI headers/footers and maximize screen space
+# Custom CSS to hide Streamlit UI footers/menus and maximize screen space
+# Note: We do NOT hide the header completely so the sidebar collapse/expand toggle button remains visible.
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     .block-container {
-        padding-top: 0rem;
+        padding-top: 2rem;
         padding-bottom: 0rem;
         padding-left: 0rem;
         padding-right: 0rem;
@@ -31,17 +31,18 @@ st.markdown("""
 
 # Function to run the tracker pipeline
 def run_update():
-    with st.sidebar:
-        with st.spinner("🚀 更新數據中..."):
-            try:
-                # Run the python script
-                result = subprocess.run(["python", "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
-                if result.returncode == 0:
-                    st.toast("數據已更新", icon="✅")
-                else:
-                    st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
-            except Exception as e:
-                st.error(f"❌ 執行更新時發生錯誤: {e}")
+    # If called from main page, we show a spinner there; if from sidebar, we show it there.
+    # To keep it simple, we wrap it in a spinner
+    with st.spinner("🚀 正在下載最新個股數據並生成看板... (約需 1-2 分鐘)"):
+        try:
+            # Run the python script
+            result = subprocess.run(["python", "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
+            if result.returncode == 0:
+                st.toast("數據已更新", icon="✅")
+            else:
+                st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
+        except Exception as e:
+            st.error(f"❌ 執行更新時發生錯誤: {e}")
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
@@ -82,4 +83,8 @@ if os.path.exists(html_file):
         html_content = f.read()
     st.components.v1.html(html_content, height=2200, scrolling=True)
 else:
-    st.warning("⚠️ 尚未生成 HTML 看板。請點擊左側「🔄 立即更新數據」按鈕來下載數據並生成看板。")
+    st.warning("⚠️ 尚未生成 HTML 看板。")
+    st.info("💡 由於這是您第一次在雲端部署或尚未生成數據，請點擊下方按鈕開始拉取台股收盤行情：")
+    if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True):
+        run_update()
+        st.rerun()
