@@ -1884,6 +1884,10 @@ def run_pipeline():
                     visibleMin: 200,
                     roam: true,
                     nodeClick: 'zoomToNode',
+                    left: 0,
+                    right: 0,
+                    top: 10,
+                    bottom: 45,
                     label: {{
                         show: true,
                         formatter: '{{b}}',
@@ -1908,14 +1912,14 @@ def run_pipeline():
                         }}
                     }},
                     itemStyle: {{
-                        borderColor: '#0b0f19',
+                        borderColor: '#161c2d',
                         borderWidth: 1.5,
                         gapWidth: 1
                     }},
                     levels: [
                         {{
                             itemStyle: {{
-                                borderColor: '#0b0f19',
+                                borderColor: '#161c2d',
                                 borderWidth: 4,
                                 gapWidth: 4
                             }},
@@ -1925,7 +1929,7 @@ def run_pipeline():
                         }},
                         {{
                             itemStyle: {{
-                                borderColor: '#0b0f19',
+                                borderColor: '#161c2d',
                                 borderWidth: 2,
                                 gapWidth: 2
                             }}
