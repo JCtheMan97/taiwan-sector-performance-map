@@ -35,14 +35,17 @@ REPORT_HTML = "daily_sector_performance.html"
 
 # Import mappings from classify_all_database
 try:
-    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name
+    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name, KEYWORD_THESAURUS, advanced_has_kw
 except ImportError:
     print("Warning: Could not import classification mappings. Defining fallbacks...")
     STOCK_SUBCLASS = {}
     CLEAN_SUBCLASS = {}
     DETAILED_SECTOR_MAP = {}
+    KEYWORD_THESAURUS = {}
     def clean_stock_name(name):
         return name
+    def advanced_has_kw(target_text, category_name):
+        return False
 
 def load_stock_list(filepath):
     """Loads all tickers and names from stocks_list.txt."""
@@ -106,62 +109,21 @@ def get_categories(name, data, ticker):
     elif clean_stock_name(name) in CLEAN_SUBCLASS:
         main_cat, sub_cat = CLEAN_SUBCLASS[clean_stock_name(name)]
     else:
-        # Programmatic ticker cleanups for crowded Electronic Components category
-        if ticker_num in ["3023", "3217", "3322", "3533", "3605", "6205", "6272", "8103", "3492", "3511", "3520", "3526", "3597", "3646", "3689", "3710", "3011", "2460", "6126", "6158", "6185", "6418", "5457", "8147", "6913", "3310", "4943"]:
-            main_cat, sub_cat = ("通訊、線材與連接器", "連接器與連接線")
-        elif ticker_num in ["3390", "3321", "6153", "6269", "3354"]:
-            main_cat, sub_cat = ("PCB 與銅箔基板", "軟性銅箔基板 (FCCL)/軟板")
-        elif ticker_num in ["3715", "4927", "5469", "6108", "6191", "8213", "3276", "3645", "5291", "5355", "5439", "6156", "6210", "8155", "8074", "8183", "6278", "6266", "8358", "4909", "6194", "6597", "8291"]:
-            main_cat, sub_cat = ("PCB 與銅箔基板", "印刷電路板 (PCB)")
-        elif ticker_num in ["3653", "3338", "6230", "6124", "3324", "8996", "6125"]:
-            main_cat, sub_cat = ("工業電腦與電腦週邊", "散熱模組與元件")
-        elif ticker_num in ["1582", "3548", "3230", "3294", "5243"]:
-            main_cat, sub_cat = ("電子零組件與其它", "轉軸與機構五金")
-        elif ticker_num in ["3049", "4935", "4960", "6120", "6176", "6456", "3622", "3623", "3666", "8105", "8215", "4933", "5220", "5315", "6246", "4729", "8069", "6899", "3285", "3543", "4942", "6405", "6698", "6854", "6916", "8104", "3523", "6167", "8049", "8111", "8240"]:
-            main_cat, sub_cat = ("光電與顯示面板", "面板與觸控模組")
-        elif ticker_num in ["3591", "3714", "4956", "5244", "2338"]:
-            main_cat, sub_cat = ("光電與顯示面板", "LED與光電元件")
-        elif ticker_num in ["6498", "6517", "3630", "5230", "3406", "3019", "3504", "3441", "4976", "6668"]:
-            main_cat, sub_cat = ("光電與顯示面板", "光電與光學鏡頭")
-        elif ticker_num in ["6203", "6276", "6821", "2431"]:
-            main_cat, sub_cat = ("電子零組件與其它", "電源供應器")
-        elif ticker_num in ["5228", "6284", "4760", "6224", "6792", "6862", "6204"]:
-            main_cat, sub_cat = ("被動元件與石英元件", "被動元件 - 電感與磁性元件")
-        elif ticker_num in ["3455", "3563", "3093", "7769", "3490", "3551", "5443", "6261", "6425", "6640", "6735", "6877", "6953", "7751", "7556", "3535", "3402", "6438", "6706", "7795", "3485", "3580", "4568", "6208", "6664", "6217"]:
-            main_cat, sub_cat = ("半導體與 PCB 設備/材料", "半導體設備與材料")
-        elif ticker_num in ["4749", "1773", "4755", "1785", "5234", "4768", "5434", "8070", "3010", "3444", "3305"]:
-            main_cat, sub_cat = ("半導體與 PCB 設備/材料", "半導體材料與特用化學品")
-        elif ticker_num in ["6451", "6552"]:
-            main_cat, sub_cat = ("半導體產業", "IC 封測 (OSAT)")
-        elif ticker_num in ["6830"]:
-            main_cat, sub_cat = ("半導體產業", "IC 研發與 analysis 服務 (MA/FA)")
-        elif ticker_num in ["6725"]:
-            main_cat, sub_cat = ("半導體產業", "分離元件與功率半導體")
-        elif ticker_num in ["6756", "6962", "5487", "6732", "6996"]:
-            main_cat, sub_cat = ("半導體產業", "IC 設計")
-        elif ticker_num in ["3416", "4995", "5474", "6577", "7402"]:
-            main_cat, sub_cat = ("工業電腦與電腦週邊", "電腦及週邊設備")
-        elif ticker_num in ["5284"]:
-            main_cat, sub_cat = ("伺服器與資訊週邊", "伺服器與資訊週邊")
-        elif ticker_num in ["6609"]:
-            main_cat, sub_cat = ("半導體與 PCB 設備/材料", "特殊及精密工業機械")
-        elif ticker_num in ["7744"]:
-            main_cat, sub_cat = ("通訊、線材與連接器", "通信與網路設備")
-        elif ticker_num in ["2347", "3048", "8112", "3036"]:
-            main_cat, sub_cat = ("傳統工業與其它", "電子通路")
-        elif ticker_num in ["2480", "3029"]:
-            main_cat, sub_cat = ("軟體與資訊服務", "資訊服務與軟體外包")
-        elif ticker_num in ["2535"]:
-            main_cat, sub_cat = ("建材營造與房地產", "營建與不動產開發")
-        elif ticker_num in ["6574", "6703", "4137", "4190", "6523", "1786", "6666", "6658"]:
-            main_cat, sub_cat = ("生技醫療", "美容保養與醫美")
-        
-        # Custom overrides for hot sectors (重電, 光通訊)
-        elif ticker_num in ["1519", "1503", "1513", "1514", "2371", "1529", "1618", "1608", "1609", "1612", "1617", "1605", "1615", "1616", "2009", "1504"] or has_kw(["重電", "電線電纜", "變壓器", "配電盤"], in_summary=False) or has_kw(["transformer", "switchgear", "heavy electrical", "power cable", "power distribution"]):
+        # Custom overrides using advanced synonym matching (Thesaurus-based)
+        if advanced_has_kw(summary, "離岸風電與風力發電") or advanced_has_kw(search_text, "離岸風電與風力發電"):
+            main_cat, sub_cat = ("綠能、環保與化學工業", "離岸風電與風力發電")
+        elif advanced_has_kw(summary, "重電與電網") or advanced_has_kw(search_text, "重電與電網"):
             main_cat, sub_cat = ("綠能、環保與化學工業", "重電與電線電纜")
-        elif ticker_num in ["3081", "4979", "3234", "4908", "3163", "4977", "3363", "6426", "6442", "3450"] or has_kw(["光通訊", "光模組", "光收發", "光主動", "光被動"], in_summary=False) or has_kw(["optical communication", "optical transceiver", "fiber optic", "laser diode", "optical module"]):
+        elif advanced_has_kw(summary, "矽光子與CPO") or advanced_has_kw(search_text, "矽光子與CPO"):
             main_cat, sub_cat = ("通訊、線材與連接器", "光通訊與光模組")
-            
+        elif advanced_has_kw(summary, "散熱模組") or advanced_has_kw(search_text, "散熱模組"):
+            main_cat, sub_cat = ("工業電腦與電腦週邊", "散熱模組與元件")
+        elif advanced_has_kw(summary, "先進封裝與設備") or advanced_has_kw(search_text, "先進封裝與設備"):
+            if "equipment" in raw_industry.lower() or "machinery" in raw_industry.lower() or any(kw in summary for kw in ["equipment", "tool", "machine", "wet process", "probe card", "lead frame"]):
+                main_cat, sub_cat = ("半導體與 PCB 設備/材料", "半導體設備與材料")
+            else:
+                main_cat, sub_cat = ("半導體產業", "IC 封測 (OSAT)")
+        
         # Raw industry defaults to clean up general categories before keyword check
         elif raw_industry in ["Electronic Distribution", "Electronics & Computer Distribution"]:
             main_cat, sub_cat = ("傳統工業與其它", "電子通路")
@@ -185,17 +147,15 @@ def get_categories(name, data, ticker):
             
         # 4. Semiconductors
         elif raw_industry == "Semiconductors" or raw_industry == "Semiconductor Equipment & Materials" or has_kw(["semiconductor", "integrated circuit", "wafer", "microchip"]):
-            if ticker_num in ["2330", "2303", "5347", "6770"]:
-                main_cat, sub_cat = ("半導體產業", "晶圓代工 (Foundry)")
-            elif ticker_num in ["3711", "2449", "6239", "6257", "3265", "3289", "8150", "6147", "3374", "6515", "3581", "3372", "8110", "2369", "6272", "3008"] or has_kw(["packaging", "semiconductor testing", "osat", "assembly service"]):
+            if has_kw(["packaging", "semiconductor testing", "osat", "assembly service"]):
                 main_cat, sub_cat = ("半導體產業", "IC 封測 (OSAT)")
-            elif ticker_num in ["2408", "2344", "2337", "3006", "5351", "2451", "3260", "8271", "4973", "8277"] or has_kw(["dram", "flash memory", "sram", "eeprom", "nor flash"]):
+            elif has_kw(["dram", "flash memory", "sram", "eeprom", "nor flash"]):
                 main_cat, sub_cat = ("半導體產業", "記憶體 (DRAM/Flash)")
-            elif ticker_num in ["3680", "3131", "3583", "6187", "3413", "6683", "6510", "6532", "5434", "3587", "1560", "6196", "3653", "3055", "3580", "8064", "7728", "6937", "8091"] or has_kw(["semiconductor equipment", "photolithography", "etching", "chemical mechanical", "probe card", "lead frame"]):
+            elif has_kw(["semiconductor equipment", "photolithography", "etching", "chemical mechanical", "probe card", "lead frame"]):
                 main_cat, sub_cat = ("半導體與 PCB 設備/材料", "半導體設備與材料")
-            elif ticker_num in ["2481", "5425", "8261", "6435", "3317", "6525", "3675", "2302", "7712", "6720", "8255"] or has_kw(["mosfet", "diode", "igbt", "rectifier", "power semiconductor"]):
+            elif has_kw(["mosfet", "diode", "igbt", "rectifier", "power semiconductor"]):
                 main_cat, sub_cat = ("半導體產業", "功率半導體 (MOSFET/二極體)")
-            elif ticker_num in ["3105", "8086", "4971", "2455", "3707", "3016", "3221"] or has_kw(["gallium arsenide", "gaas", "rf ic", "radio frequency"]):
+            elif has_kw(["gallium arsenide", "gaas", "rf ic", "radio frequency"]):
                 main_cat, sub_cat = ("半導體產業", "化合物半導體與射頻晶片")
             elif has_kw(["design", "fabless", "asic", "chipset"]) or has_kw(["設計", "DESIGN", "晶片", "矽", "IC"], in_summary=False):
                 if has_kw(["power management", "pmic", "analog ic"]):
@@ -312,11 +272,14 @@ def run_pipeline():
         print(f"Downloading chunk {i // chunk_size + 1} / {len(tickers) // chunk_size + 1}...")
         try:
             df = yf.download(chunk, period="20d", progress=False, group_by='column')
-            if 'Close' in df and 'Volume' in df:
-                all_closes.append(df['Close'])
+            if 'Volume' in df:
+                if 'Adj Close' in df:
+                    all_closes.append(df['Adj Close'])
+                elif 'Close' in df:
+                    all_closes.append(df['Close'])
                 all_volumes.append(df['Volume'])
             else:
-                print(f"Warning: 'Close' or 'Volume' column not found in chunk {i // chunk_size + 1}")
+                print(f"Warning: 'Volume' column not found in chunk {i // chunk_size + 1}")
         except Exception as e:
             print(f"Error downloading chunk: {e}")
             
@@ -351,7 +314,7 @@ def run_pipeline():
     change_10d = ((valid_df.iloc[-1] - valid_df.iloc[idx_10d]) / valid_df.iloc[idx_10d]) * 100
     
     # Clean anomalies (e.g. capital reduction multipliers)
-    change_1d = change_1d[(change_1d >= -25) & (change_1d <= 45)].dropna()
+    change_1d = change_1d[(change_1d >= -11) & (change_1d <= 11)].dropna()
     change_5d = change_5d[(change_5d >= -45) & (change_5d <= 80)].dropna()
     change_10d = change_10d[(change_10d >= -60) & (change_10d <= 120)].dropna()
     
@@ -2062,27 +2025,37 @@ def run_pipeline():
             if (params.data && params.data.name) {{
                 const cleanName = params.data.name.split('\\n')[0].trim();
                 
-                // Try focusing stock
+                // Try focusing stock first
                 focusStock(cleanName);
                 
-                // If it is a sector name, scroll and highlight its main card
-                const mainSafeId = "id_" + CryptoJS_MD5_mock(cleanName); // wait, we can just search cards directly
+                // Check if it is a main sector name
                 const cards = document.querySelectorAll('.main-card');
+                let foundSector = false;
                 for (let card of cards) {{
                     const titleText = card.querySelector('.main-title').innerText.trim();
                     if (titleText === cleanName) {{
                         focusSectorCard(card.id);
+                        foundSector = true;
                         break;
+                    }}
+                }}
+                
+                // If not a main sector, check if it is a sub-sector name
+                if (!foundSector) {{
+                    const subSections = document.querySelectorAll('.sub-section');
+                    for (let section of subSections) {{
+                        const titleSpan = section.querySelector('.sub-title');
+                        if (titleSpan) {{
+                            const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
+                            if (titleText === cleanName) {{
+                                focusSubSection(section.id);
+                                break;
+                            }}
+                        }}
                     }}
                 }}
             }}
         }});
-        
-        // Simple client side MD5 mock helper mapping main titles to their IDs to scroll focus main cards
-        function CryptoJS_MD5_mock(text) {{
-            // Simple mapping since we have them rendered
-            return ""; 
-        }}
         
         // Initial load
         switchPeriod('1d');
