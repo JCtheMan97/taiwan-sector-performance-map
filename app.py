@@ -11,7 +11,6 @@ st.set_page_config(
 )
 
 # Custom CSS to hide Streamlit UI footers/menus and maximize screen space
-# Note: We do NOT hide the header completely so the sidebar collapse/expand toggle button remains visible.
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -29,37 +28,67 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+html_file = "daily_sector_performance.html"
+lock_file = "update.lock"
+min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
+
+# Check last update time
+if os.path.exists(html_file):
+    mtime = os.path.getmtime(html_file)
+    last_update_dt = datetime.fromtimestamp(mtime)
+    last_update = last_update_dt.strftime('%Y-%m-%d %H:%M:%S')
+    time_since_update = (datetime.now() - last_update_dt).total_seconds()
+else:
+    last_update = "無歷史數據"
+    time_since_update = 999999
+
 # Function to run the tracker pipeline
 def run_update():
-    # If called from main page, we show a spinner there; if from sidebar, we show it there.
-    # To keep it simple, we wrap it in a spinner
-    with st.spinner("🚀 正在下載最新個股數據並生成看板... (約需 1-2 分鐘)"):
-        try:
-            # Run the python script
-            result = subprocess.run(["python", "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
-            if result.returncode == 0:
-                st.toast("數據已更新", icon="✅")
-            else:
-                st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
-        except Exception as e:
-            st.error(f"❌ 執行更新時發生錯誤: {e}")
+    if os.path.exists(lock_file):
+        st.error("⚠️ 系統目前正由其他使用者更新中，請稍候再試。")
+        return
+        
+    if time_since_update < min_interval_seconds:
+        st.warning(f"📊 數據在 10 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 Yahoo API 限制 IP。")
+        return
+
+    # Create lock file
+    with open(lock_file, "w") as f:
+        f.write(str(datetime.now()))
+
+    try:
+        # Run the python script
+        result = subprocess.run(["python", "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
+        if result.returncode == 0:
+            st.toast("數據已更新", icon="✅")
+        else:
+            st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
+    except Exception as e:
+        st.error(f"❌ 執行更新時發生錯誤: {e}")
+    finally:
+        # Remove lock file when finished
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
 
-# Last updated time
-html_file = "daily_sector_performance.html"
-if os.path.exists(html_file):
-    mtime = os.path.getmtime(html_file)
-    last_update = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-else:
-    last_update = "無歷史數據"
-
 st.sidebar.write(f"📅 **數據更新時間：**\n`{last_update}`")
 
-if st.sidebar.button("🔄 立即更新數據", use_container_width=True):
-    run_update()
-    st.rerun()
+# Render update button on sidebar based on system status
+is_locked = os.path.exists(lock_file)
+is_too_frequent = time_since_update < min_interval_seconds
+
+if is_locked:
+    st.sidebar.warning("⚠️ 其他使用者正在更新中...")
+    st.sidebar.button("🔄 立即更新數據", disabled=True, use_container_width=True, key="sb_btn_locked")
+elif is_too_frequent:
+    st.sidebar.info("📊 數據已是最新（10分鐘內）")
+    st.sidebar.button("🔄 10分鐘內已更新過", disabled=True, use_container_width=True, key="sb_btn_frequent")
+else:
+    if st.sidebar.button("🔄 立即更新數據", use_container_width=True, key="sb_btn_active"):
+        run_update()
+        st.rerun()
 
 # Expandable sidebar for markdown report
 md_file = "daily_sector_performance.md"
@@ -85,6 +114,12 @@ if os.path.exists(html_file):
 else:
     st.warning("⚠️ 尚未生成 HTML 看板。")
     st.info("💡 由於這是您第一次在雲端部署或尚未生成數據，請點擊下方按鈕開始拉取台股收盤行情：")
-    if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True):
-        run_update()
-        st.rerun()
+    
+    if is_locked:
+        st.warning("⚠️ 系統目前正由其他使用者更新中，請稍候並重新整理網頁。")
+    elif is_too_frequent:
+        st.info(f"📊 數據剛更新過（最後更新：{last_update}），請重新整理網頁載入。")
+    else:
+        if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True, key="main_btn_active"):
+            run_update()
+            st.rerun()
