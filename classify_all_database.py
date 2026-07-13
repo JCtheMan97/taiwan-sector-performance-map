@@ -1685,7 +1685,7 @@ KEYWORD_THESAURUS = {
     "散熱模組": ["散熱", "熱傳導", "水冷", "液冷", "風扇", "壓鑄", "thermal", "cooling", "cold plate", "散熱片", "散熱模組", "散熱片"],
     "矽光子與CPO": ["矽光子", "光通訊", "CPO", "光收發", "光學共同封裝", "波分復用", "optical", "transceiver", "photonic", "vcsel", "fiber optic"],
     "重電與電網": ["重電", "變壓器", "配電盤", "開關", "強韌電網", "電力輸送", "transformer", "switchgear", "heavy electrical", "power cable", "power distribution"],
-    "先進封裝與設備": ["先進封裝", "CoWoS", "浸入", "濕製程", "點膠", "探針卡", "測試介面", "晶圓級", "packaging", "semiconductor testing", "osat", "assembly service"],
+    "先進封裝與設備": ["先進封裝", "CoWoS", "浸入", "濕製程", "點膠", "探針卡", "測試介面", "晶圓級", "advanced packaging", "semiconductor testing", "osat", "assembly service"],
     "離岸風電與風力發電": ["風電", "風力", "離岸風電", "jacket", "wind power", "wind turbine", "wind energy"],
     "太陽能綠能": ["太陽能", "光電", "solar", "photovoltaic", "green energy"],
 }

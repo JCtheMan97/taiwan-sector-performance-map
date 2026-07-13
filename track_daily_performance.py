@@ -149,7 +149,7 @@ def get_categories(name, data, ticker):
         elif raw_industry == "Semiconductors" or raw_industry == "Semiconductor Equipment & Materials" or has_kw(["semiconductor", "integrated circuit", "wafer", "microchip"]):
             if has_kw(["packaging", "semiconductor testing", "osat", "assembly service"]):
                 main_cat, sub_cat = ("半導體產業", "IC 封測 (OSAT)")
-            elif has_kw(["dram", "flash memory", "sram", "eeprom", "nor flash"]):
+            elif has_kw(["dram", "flash memory", "sram", "eeprom", "nor flash", "memory product", "memory module", "ssd", "solid state drive", "flash drive"]):
                 main_cat, sub_cat = ("半導體產業", "記憶體 (DRAM/Flash)")
             elif has_kw(["semiconductor equipment", "photolithography", "etching", "chemical mechanical", "probe card", "lead frame"]):
                 main_cat, sub_cat = ("半導體與 PCB 設備/材料", "半導體設備與材料")
@@ -157,7 +157,7 @@ def get_categories(name, data, ticker):
                 main_cat, sub_cat = ("半導體產業", "功率半導體 (MOSFET/二極體)")
             elif has_kw(["gallium arsenide", "gaas", "rf ic", "radio frequency"]):
                 main_cat, sub_cat = ("半導體產業", "化合物半導體與射頻晶片")
-            elif has_kw(["design", "fabless", "asic", "chipset"]) or has_kw(["設計", "DESIGN", "晶片", "矽", "IC"], in_summary=False):
+            elif has_kw(["ic design", "chip design", "fabless", "asic", "chipset"]) or has_kw(["設計", "DESIGN", "晶片", "矽", "IC"], in_summary=False):
                 if has_kw(["power management", "pmic", "analog ic"]):
                     main_cat, sub_cat = ("半導體產業", "IC 設計 - 類比與電源管理")
                 elif has_kw(["driver ic", "lcd driver"]):
@@ -265,6 +265,7 @@ def run_pipeline():
     chunk_size = 400
     all_closes = []
     all_volumes = []
+    all_closes_today = []
     
     print(f"Downloading prices and volumes for {len(tickers)} tickers in chunks of {chunk_size}...")
     for i in range(0, len(tickers), chunk_size):
@@ -272,14 +273,34 @@ def run_pipeline():
         print(f"Downloading chunk {i // chunk_size + 1} / {len(tickers) // chunk_size + 1}...")
         try:
             df = yf.download(chunk, period="20d", progress=False, group_by='column')
-            if 'Volume' in df:
-                if 'Adj Close' in df:
-                    all_closes.append(df['Adj Close'])
-                elif 'Close' in df:
-                    all_closes.append(df['Close'])
-                all_volumes.append(df['Volume'])
+            
+            closes_chunk = pd.DataFrame(index=df.index)
+            volumes_chunk = pd.DataFrame(index=df.index)
+            for col in chunk:
+                if ('Adj Close', col) in df.columns:
+                    closes_chunk[col] = df[('Adj Close', col)]
+                elif ('Close', col) in df.columns:
+                    closes_chunk[col] = df[('Close', col)]
+                if ('Volume', col) in df.columns:
+                    volumes_chunk[col] = df[('Volume', col)]
+            
+            if not closes_chunk.empty and not volumes_chunk.empty:
+                all_closes.append(closes_chunk)
+                all_volumes.append(volumes_chunk)
             else:
-                print(f"Warning: 'Volume' column not found in chunk {i // chunk_size + 1}")
+                print(f"Warning: Empty data in chunk {i // chunk_size + 1}")
+                
+            # Fetch the real-time quote for today to patch any incomplete/NaN close prices
+            df_today = yf.download(chunk, period="1d", progress=False, group_by='column')
+            closes_today_chunk = pd.DataFrame(index=df_today.index)
+            for col in chunk:
+                if ('Adj Close', col) in df_today.columns:
+                    closes_today_chunk[col] = df_today[('Adj Close', col)]
+                elif ('Close', col) in df_today.columns:
+                    closes_today_chunk[col] = df_today[('Close', col)]
+            
+            if not closes_today_chunk.empty:
+                all_closes_today.append(closes_today_chunk)
         except Exception as e:
             print(f"Error downloading chunk: {e}")
             
@@ -289,6 +310,18 @@ def run_pipeline():
         
     combined_closes = pd.concat(all_closes, axis=1)
     combined_volumes = pd.concat(all_volumes, axis=1)
+    
+    # Fill NaN values in the last row of combined_closes using 1d real-time quotes
+    if all_closes_today:
+        combined_closes_today = pd.concat(all_closes_today, axis=1)
+        last_date = combined_closes.index[-1]
+        for col in combined_closes.columns:
+            if pd.isna(combined_closes.loc[last_date, col]) and col in combined_closes_today.columns:
+                # only fill if the volume is not zero on the latest day
+                if col in combined_volumes.columns and combined_volumes.loc[last_date, col] > 0:
+                    val = combined_closes_today.loc[combined_closes_today.index[-1], col]
+                    if pd.notna(val):
+                        combined_closes.loc[last_date, col] = val
     
     # Mask close prices where volume is 0 (prevents stale prices on holidays/closures)
     combined_closes = combined_closes.mask(combined_volumes == 0)
