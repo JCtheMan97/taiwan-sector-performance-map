@@ -295,6 +295,18 @@ def run_pipeline():
     
     # Extract valid trading rows
     valid_df = combined_closes.dropna(how='all')
+    
+    # Auto-rollback if today's yfinance closing prices are not yet fully updated (mostly NaN)
+    while len(valid_df) >= 2:
+        last_row = valid_df.iloc[-1]
+        non_nan_count = last_row.notna().sum()
+        total_count = len(last_row)
+        if non_nan_count < (total_count * 0.5):
+            print(f"Warning: Latest day ({valid_df.index[-1].date()}) has incomplete price data ({non_nan_count}/{total_count} tickers). Rolling back to previous trading day...")
+            valid_df = valid_df.iloc[:-1]
+        else:
+            break
+            
     num_days = len(valid_df)
     if num_days < 2:
         print("Error: Insufficient historical trading dates found.")
