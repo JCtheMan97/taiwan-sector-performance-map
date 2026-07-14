@@ -30342,31 +30342,37 @@
             if (params.data && params.data.name) {
                 const cleanName = params.data.name.split('\n')[0].trim();
                 
-                // Try focusing stock first
-                focusStock(cleanName);
-                
-                // Check if it is a main sector name
-                const cards = document.querySelectorAll('.main-card');
-                let foundSector = false;
-                for (let card of cards) {
-                    const titleText = card.querySelector('.main-title').innerText.trim();
-                    if (titleText === cleanName) {
-                        focusSectorCard(card.id);
-                        foundSector = true;
-                        break;
+                // If it is a stock leaf node (has ticker)
+                if (params.data.ticker) {
+                    focusStock(cleanName);
+                } else {
+                    // Clear search filter so we don't get a blank heatmap
+                    document.getElementById('search-input').value = '';
+                    searchStocks();
+                    
+                    // Check if it is a main sector name
+                    const cards = document.querySelectorAll('.main-card');
+                    let foundSector = false;
+                    for (let card of cards) {
+                        const titleText = card.querySelector('.main-title').innerText.trim();
+                        if (titleText === cleanName) {
+                            focusSectorCard(card.id);
+                            foundSector = true;
+                            break;
+                        }
                     }
-                }
-                
-                // If not a main sector, check if it is a sub-sector name
-                if (!foundSector) {
-                    const subSections = document.querySelectorAll('.sub-section');
-                    for (let section of subSections) {
-                        const titleSpan = section.querySelector('.sub-title');
-                        if (titleSpan) {
-                            const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
-                            if (titleText === cleanName) {
-                                focusSubSection(section.id);
-                                break;
+                    
+                    // If not a main sector, check if it is a sub-sector name
+                    if (!foundSector) {
+                        const subSections = document.querySelectorAll('.sub-section');
+                        for (let section of subSections) {
+                            const titleSpan = section.querySelector('.sub-title');
+                            if (titleSpan) {
+                                const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
+                                if (titleText === cleanName) {
+                                    focusSubSection(section.id);
+                                    break;
+                                }
                             }
                         }
                     }
