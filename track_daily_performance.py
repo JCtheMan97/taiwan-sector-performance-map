@@ -610,6 +610,8 @@ def run_pipeline():
                              id="stock-{ticker_clean}" 
                              data-ticker="{ticker_short}" 
                              data-name="{row['name']}"
+                             data-main-cat="{main_name}"
+                             data-sub-cat="{sub_name}"
                              data-1d="{c_1d}" 
                              data-5d="{c_5d}" 
                              data-10d="{c_10d}" 
@@ -1512,12 +1514,17 @@ def run_pipeline():
             pills.forEach(pill => {{
                 const name = pill.getAttribute('data-name').trim().toLowerCase();
                 const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
+                const mainCat = (pill.getAttribute('data-main-cat') || '').trim().toLowerCase();
+                const subCat = (pill.getAttribute('data-sub-cat') || '').trim().toLowerCase();
                 
                 let isMatch = false;
                 if (hasExactMatch) {{
                     isMatch = (name === query || ticker === query);
                 }} else {{
-                    isMatch = (name.includes(query) || ticker.includes(query));
+                    isMatch = (name.includes(query) || 
+                               ticker.includes(query) || 
+                               mainCat.includes(query) || 
+                               subCat.includes(query));
                 }}
                 
                 if (isMatch) {{
@@ -2074,40 +2081,39 @@ def run_pipeline():
             if (params.data && params.data.name) {{
                 const cleanName = params.data.name.split('\\n')[0].trim();
                 
-                // If it is a stock leaf node (has ticker)
-                if (params.data.ticker) {{
-                    focusStock(cleanName);
-                }} else {{
-                    // Clear search filter so we don't get a blank heatmap
-                    document.getElementById('search-input').value = '';
-                    searchStocks();
-                    
-                    // Check if it is a main sector name
-                    const cards = document.querySelectorAll('.main-card');
-                    let foundSector = false;
-                    for (let card of cards) {{
-                        const titleText = card.querySelector('.main-title').innerText.trim();
-                        if (titleText === cleanName) {{
-                            focusSectorCard(card.id);
-                            foundSector = true;
-                            break;
+                // Filter by name (supports stock names, main sector names, and sub-sector names!)
+                focusStock(cleanName);
+                
+                // If it is a main sector or sub-sector (not a leaf stock), scroll to it specifically
+                if (!params.data.ticker) {{
+                    setTimeout(() => {{
+                        // Check if it is a main sector name
+                        const cards = document.querySelectorAll('.main-card');
+                        let foundSector = false;
+                        for (let card of cards) {{
+                            const titleText = card.querySelector('.main-title').innerText.trim();
+                            if (titleText === cleanName) {{
+                                focusSectorCard(card.id);
+                                foundSector = true;
+                                break;
+                            }}
                         }}
-                    }}
-                    
-                    // If not a main sector, check if it is a sub-sector name
-                    if (!foundSector) {{
-                        const subSections = document.querySelectorAll('.sub-section');
-                        for (let section of subSections) {{
-                            const titleSpan = section.querySelector('.sub-title');
-                            if (titleSpan) {{
-                                const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
-                                if (titleText === cleanName) {{
-                                    focusSubSection(section.id);
-                                    break;
+                        
+                        // If not a main sector, check if it is a sub-sector name
+                        if (!foundSector) {{
+                            const subSections = document.querySelectorAll('.sub-section');
+                            for (let section of subSections) {{
+                                const titleSpan = section.querySelector('.sub-title');
+                                if (titleSpan) {{
+                                    const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
+                                    if (titleText === cleanName) {{
+                                        focusSubSection(section.id);
+                                        break;
+                                    }}
                                 }}
                             }}
                         }}
-                    }}
+                    }}, 100);
                 }}
             }}
         }});
