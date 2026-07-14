@@ -35,7 +35,7 @@ REPORT_HTML = "daily_sector_performance.html"
 
 # Import mappings from classify_all_database
 try:
-    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name, KEYWORD_THESAURUS, advanced_has_kw
+    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name, KEYWORD_THESAURUS, advanced_has_kw, clean_category
 except ImportError:
     print("Warning: Could not import classification mappings. Defining fallbacks...")
     STOCK_SUBCLASS = {}
@@ -229,7 +229,7 @@ def get_categories(name, data, ticker):
                 main_cat = "其他未分類"
                 sub_cat = raw_industry
                 
-    return main_cat, sub_cat
+    return clean_category(main_cat, sub_cat)
 
 def run_pipeline():
     print("=" * 60)
