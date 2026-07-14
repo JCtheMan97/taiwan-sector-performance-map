@@ -2081,7 +2081,7 @@ def run_pipeline():
         // Treemap node click interaction -> floats card to top and highlights it!
         treemapChart.on('click', function (params) {{
             if (params.data && params.data.name) {{
-                const cleanName = params.data.name.split('\\n')[0].trim();
+                const cleanName = params.data.name.split(/\\n| \\(/)[0].trim();
                 
                 // Filter by name (supports stock names, main sector names, and sub-sector names!)
                 focusStock(cleanName);
