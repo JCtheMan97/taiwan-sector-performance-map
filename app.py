@@ -33,6 +33,7 @@ lock_file = "update.lock"
 min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
 
 # Check last update time
+last_update_dt = None
 if os.path.exists(html_file):
     mtime = os.path.getmtime(html_file)
     last_update_dt = datetime.fromtimestamp(mtime)
@@ -69,6 +70,29 @@ def run_update():
         # Remove lock file when finished
         if os.path.exists(lock_file):
             os.remove(lock_file)
+
+# Check if auto-update is needed on page load
+is_locked = os.path.exists(lock_file)
+is_too_frequent = time_since_update < min_interval_seconds
+
+auto_update_needed = False
+if last_update_dt:
+    now = datetime.now()
+    # Check if last update is more than 16 hours ago
+    if (now - last_update_dt).total_seconds() > 16 * 3600:
+        auto_update_needed = True
+    elif now.weekday() < 5:  # Weekday (Mon-Fri)
+        today_close_time = now.replace(hour=14, minute=0, second=0, microsecond=0)
+        # If past 2:00 PM today and last update was before 1:50 PM today
+        if now >= today_close_time and last_update_dt < now.replace(hour=13, minute=50, second=0, microsecond=0):
+            auto_update_needed = True
+else:
+    auto_update_needed = True
+
+if auto_update_needed and not is_locked and not is_too_frequent:
+    st.info("🔄 偵測到有最新的台股收盤數據，系統正在自動更新看板中，請稍候約 1-2 分鐘...")
+    run_update()
+    st.rerun()
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
