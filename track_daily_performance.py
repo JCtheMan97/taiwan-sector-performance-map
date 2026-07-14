@@ -147,7 +147,9 @@ def get_categories(name, data, ticker):
             
         # 4. Semiconductors
         elif raw_industry == "Semiconductors" or raw_industry == "Semiconductor Equipment & Materials" or has_kw(["semiconductor", "integrated circuit", "wafer", "microchip"]):
-            if has_kw(["packaging", "semiconductor testing", "osat", "assembly service"]):
+            if has_kw(["foundry", "wafer fabrication", "wafer manufacturing"]):
+                main_cat, sub_cat = ("半導體產業", "晶圓代工")
+            elif has_kw(["packaging", "semiconductor testing", "osat", "assembly service"]):
                 main_cat, sub_cat = ("半導體產業", "IC 封測 (OSAT)")
             elif has_kw(["dram", "flash memory", "sram", "eeprom", "nor flash", "memory product", "memory module", "ssd", "solid state drive", "flash drive"]):
                 main_cat, sub_cat = ("半導體產業", "記憶體 (DRAM/Flash)")
