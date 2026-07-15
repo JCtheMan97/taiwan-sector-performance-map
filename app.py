@@ -47,21 +47,24 @@ else:
 def run_update():
     if os.path.exists(lock_file):
         st.error("⚠️ 系統目前正由其他使用者更新中，請稍候再試。")
-        return
+        return False
         
     if time_since_update < min_interval_seconds:
         st.warning(f"📊 數據在 10 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 Yahoo API 限制 IP。")
-        return
+        return False
 
     # Create lock file
     with open(lock_file, "w") as f:
         f.write(str(datetime.now()))
 
+    success = False
     try:
-        # Run the python script
-        result = subprocess.run(["python", "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
+        import sys
+        # Run the python script using the exact same python interpreter path
+        result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
         if result.returncode == 0:
             st.toast("數據已更新", icon="✅")
+            success = True
         else:
             st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
     except Exception as e:
@@ -70,6 +73,7 @@ def run_update():
         # Remove lock file when finished
         if os.path.exists(lock_file):
             os.remove(lock_file)
+    return success
 
 # Check if auto-update is needed on page load
 is_locked = os.path.exists(lock_file)
@@ -91,8 +95,8 @@ else:
 
 if auto_update_needed and not is_locked and not is_too_frequent:
     st.info("🔄 偵測到有最新的台股收盤數據，系統正在自動更新看板中，請稍候約 1-2 分鐘...")
-    run_update()
-    st.rerun()
+    if run_update():
+        st.rerun()
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
@@ -111,8 +115,8 @@ elif is_too_frequent:
     st.sidebar.button("🔄 10分鐘內已更新過", disabled=True, use_container_width=True, key="sb_btn_frequent")
 else:
     if st.sidebar.button("🔄 立即更新數據", use_container_width=True, key="sb_btn_active"):
-        run_update()
-        st.rerun()
+        if run_update():
+            st.rerun()
 
 # Expandable sidebar for markdown report
 md_file = "daily_sector_performance.md"
@@ -145,5 +149,5 @@ else:
         st.info(f"📊 數據剛更新過（最後更新：{last_update}），請重新整理網頁載入。")
     else:
         if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True, key="main_btn_active"):
-            run_update()
-            st.rerun()
+            if run_update():
+                st.rerun()
