@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 st.set_page_config(
     page_title="台股產業資金流向圖",
@@ -32,13 +32,17 @@ html_file = "daily_sector_performance.html"
 lock_file = "update.lock"
 min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
 
+# Define Taiwan Timezone (UTC+8)
+tw_tz = timezone(timedelta(hours=8))
+
 # Check last update time
 last_update_dt = None
 if os.path.exists(html_file):
     mtime = os.path.getmtime(html_file)
-    last_update_dt = datetime.fromtimestamp(mtime)
+    last_update_dt = datetime.fromtimestamp(mtime, tz=tw_tz)
     last_update = last_update_dt.strftime('%Y-%m-%d %H:%M:%S')
-    time_since_update = (datetime.now() - last_update_dt).total_seconds()
+    now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
+    time_since_update = (now_tw - last_update_dt).total_seconds()
 else:
     last_update = "無歷史數據"
     time_since_update = 999999
@@ -55,7 +59,8 @@ def run_update():
 
     # Create lock file
     with open(lock_file, "w") as f:
-        f.write(str(datetime.now()))
+        now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
+        f.write(str(now_tw))
 
     success = False
     try:
@@ -81,14 +86,14 @@ is_too_frequent = time_since_update < min_interval_seconds
 
 auto_update_needed = False
 if last_update_dt:
-    now = datetime.now()
+    now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
     # Check if last update is more than 16 hours ago
-    if (now - last_update_dt).total_seconds() > 16 * 3600:
+    if (now_tw - last_update_dt).total_seconds() > 16 * 3600:
         auto_update_needed = True
-    elif now.weekday() < 5:  # Weekday (Mon-Fri)
-        today_close_time = now.replace(hour=14, minute=0, second=0, microsecond=0)
+    elif now_tw.weekday() < 5:  # Weekday (Mon-Fri) in Taiwan
+        today_close_time = now_tw.replace(hour=14, minute=0, second=0, microsecond=0)
         # If past 2:00 PM today and last update was before 1:50 PM today
-        if now >= today_close_time and last_update_dt < now.replace(hour=13, minute=50, second=0, microsecond=0):
+        if now_tw >= today_close_time and last_update_dt < now_tw.replace(hour=13, minute=50, second=0, microsecond=0):
             auto_update_needed = True
 else:
     auto_update_needed = True
