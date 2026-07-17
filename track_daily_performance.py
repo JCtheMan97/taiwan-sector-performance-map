@@ -254,12 +254,12 @@ def run_pipeline():
     for name, ticker in stocks:
         profile = cache.get(ticker, {})
         main_cat, sub_cat = get_categories(name, profile, ticker)
-        market_cap = profile.get("marketCap", 1_000_000_000) # fallback 1B TWD
+        # market_cap will be updated later with real data (shares × price)
         stock_mapping[ticker] = {
             "name": name,
             "main_cat": main_cat,
             "sub_cat": sub_cat,
-            "market_cap": market_cap
+            "market_cap": 1_000_000_000  # temporary placeholder
         }
         
     # 3. Batch download prices and volumes (period=20d to cover 10 trading days)
@@ -342,11 +342,51 @@ def run_pipeline():
         else:
             break
             
+    # ── Market Cap Calculation ─────────────────────────────────────────────────
+    # Use shares_outstanding × last close price to compute real-time market cap.
+    # Shares are cached in mcap_cache.json so we don't refetch every single day.
+    MCAP_CACHE_FILE = "mcap_cache.json"
+    mcap_cache = {}
+    if os.path.exists(MCAP_CACHE_FILE):
+        with open(MCAP_CACHE_FILE, "r", encoding="utf-8") as f:
+            mcap_cache = json.load(f)
+
+    last_prices = valid_df.iloc[-1]  # today's close prices
+    tickers_needing_shares = [t for t in stock_mapping.keys() if t not in mcap_cache]
+
+    if tickers_needing_shares:
+        print(f"Fetching shares_outstanding for {len(tickers_needing_shares)} new tickers (first time only)...")
+        for i in range(0, len(tickers_needing_shares), 200):
+            chunk = tickers_needing_shares[i:i+200]
+            for t in chunk:
+                try:
+                    fi = yf.Ticker(t).fast_info
+                    shares = getattr(fi, 'shares', None) or getattr(fi, 'shares_outstanding', None)
+                    if shares and shares > 0:
+                        mcap_cache[t] = int(shares)
+                except Exception:
+                    pass
+        with open(MCAP_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(mcap_cache, f)
+        print(f"Saved shares_outstanding for {len(mcap_cache)} tickers to {MCAP_CACHE_FILE}")
+
+    # Now compute real market cap = shares × last close price
+    updated_count = 0
+    for ticker in stock_mapping:
+        price = last_prices.get(ticker, None)
+        shares = mcap_cache.get(ticker, None)
+        if price and shares and pd.notna(price) and price > 0:
+            stock_mapping[ticker]["market_cap"] = int(shares * price)
+            updated_count += 1
+        # else: keep the 1B placeholder (will look small but not cause crash)
+    print(f"Market cap updated for {updated_count}/{len(stock_mapping)} stocks using shares × price.")
+    # ──────────────────────────────────────────────────────────────────────────
+
     num_days = len(valid_df)
     if num_days < 2:
         print("Error: Insufficient historical trading dates found.")
         return
-        
+
     date_str = str(valid_df.index[-1].date())
     prev_date_str = str(valid_df.index[-2].date())
     print(f"Trading date: {date_str}. Total valid trading days loaded: {num_days}.")
