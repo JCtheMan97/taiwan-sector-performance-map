@@ -1,7 +1,8 @@
 import streamlit as st
 import os
+import re
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 
 st.set_page_config(
     page_title="台股產業資金流向圖",
@@ -29,23 +30,46 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 html_file = "daily_sector_performance.html"
+md_file_check = "daily_sector_performance.md"
 lock_file = "update.lock"
 min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
 
 # Define Taiwan Timezone (UTC+8)
 tw_tz = timezone(timedelta(hours=8))
 
-# Check last update time
+# --- Helper: read ACTUAL data date from the markdown report ---
+def get_data_date():
+    """Parse the statistics date from the first line of the MD report.
+    Returns a date object or None if the file is missing / unparseable.
+    """
+    if not os.path.exists(md_file_check):
+        return None
+    try:
+        with open(md_file_check, "r", encoding="utf-8") as f:
+            first_line = f.readline()
+        # Expected format:  # 📊 每日族群漲跌與資金流向看板 (2026-07-17)
+        m = re.search(r'\((\d{4}-\d{2}-\d{2})\)', first_line)
+        if m:
+            return datetime.strptime(m.group(1), '%Y-%m-%d').date()
+    except Exception:
+        pass
+    return None
+
+# Check last update time (file mtime – used for display and cooldown)
+now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
 last_update_dt = None
 if os.path.exists(html_file):
     mtime = os.path.getmtime(html_file)
     last_update_dt = datetime.fromtimestamp(mtime, tz=tw_tz)
     last_update = last_update_dt.strftime('%Y-%m-%d %H:%M:%S')
-    now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
     time_since_update = (now_tw - last_update_dt).total_seconds()
 else:
     last_update = "無歷史數據"
     time_since_update = 999999
+
+# Actual data date (read from MD file – more reliable than file mtime)
+data_date = get_data_date()
+today_tw = now_tw.date()
 
 # Function to run the tracker pipeline
 def run_update():
@@ -80,23 +104,29 @@ def run_update():
             os.remove(lock_file)
     return success
 
-# Check if auto-update is needed on page load
+# ── Auto-update decision logic ───────────────────────────────────────────────
+# The key fix: compare the ACTUAL DATA DATE (from the MD file) with today's
+# Taiwan date, NOT the file's mtime.  This prevents the case where the pipeline
+# ran but rolled back to yesterday, leaving the file stamp as "today" while the
+# data is still stale.
 is_locked = os.path.exists(lock_file)
 is_too_frequent = time_since_update < min_interval_seconds
 
 auto_update_needed = False
-if last_update_dt:
-    now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
-    # Check if last update is more than 16 hours ago
-    if (now_tw - last_update_dt).total_seconds() > 16 * 3600:
-        auto_update_needed = True
-    elif now_tw.weekday() < 5:  # Weekday (Mon-Fri) in Taiwan
-        today_close_time = now_tw.replace(hour=14, minute=0, second=0, microsecond=0)
-        # If past 2:00 PM today and last update was before 1:50 PM today
-        if now_tw >= today_close_time and last_update_dt < now_tw.replace(hour=13, minute=50, second=0, microsecond=0):
-            auto_update_needed = True
-else:
+past_close = now_tw.hour >= 14  # After 14:00 Taiwan time (market closed)
+
+if data_date is None:
+    # No data at all → always update
     auto_update_needed = True
+elif data_date < today_tw:
+    # Data is from a previous date
+    if now_tw.weekday() < 5 and past_close:
+        # Weekday AND past 14:00 → today's close data should be available
+        auto_update_needed = True
+    elif (now_tw - last_update_dt).total_seconds() > 16 * 3600:
+        # Or it's been more than 16 hours regardless
+        auto_update_needed = True
+# If data_date == today_tw → data is already fresh, no update needed
 
 if auto_update_needed and not is_locked and not is_too_frequent:
     st.info("🔄 偵測到有最新的台股收盤數據，系統正在自動更新看板中，請稍候約 1-2 分鐘...")

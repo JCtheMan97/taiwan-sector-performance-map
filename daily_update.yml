@@ -1,0 +1,58 @@
+name: 📊 每日台股板塊數據自動更新
+
+on:
+  # 每週一到五，台灣時間 14:30 (UTC 06:30) 自動觸發 (收盤後 yfinance 資料穩定)
+  schedule:
+    - cron: '30 6 * * 1-5'
+  # 也允許在 GitHub 上手動觸發 (Actions 頁面 → Run workflow)
+  workflow_dispatch:
+
+jobs:
+  update-heatmap:
+    name: 下載台股數據並重新產生熱力圖
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # 允許 push commit 回 repo
+
+    steps:
+      # 1. 拉取最新 repo 內容
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # 2. 設定 Python 環境
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # 3. 安裝相依套件
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4. 執行數據下載與 HTML 產生腳本
+      - name: 🚀 Run daily performance tracker
+        run: python track_daily_performance.py
+
+      # 5. 設定 git 提交者資訊
+      - name: 🔧 Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 6. 將產生的新 HTML / MD 推回 repo
+      # (Streamlit Cloud 監聽到新 commit 會自動重新部署)
+      - name: 📤 Commit and push updated dashboard
+        run: |
+          git add daily_sector_performance.html daily_sector_performance.md
+          # 若檔案沒有任何變動 (例如非交易日) 則跳過 commit，避免空 commit 錯誤
+          if git diff --staged --quiet; then
+            echo "No changes to commit. Market may be closed today."
+          else
+            TODAY=$(TZ='Asia/Taipei' date '+%Y-%m-%d')
+            git commit -m "📊 自動更新：台股板塊熱力圖 ${TODAY}"
+            git push
+          fi
