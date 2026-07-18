@@ -658,8 +658,8 @@ def run_pipeline():
         f.write("\n".join(md_lines))
     print(f"Markdown report generated successfully.")
     
-    # 6. Build HTML structure for All Stocks Master Map Grid
-    print("Generating HTML layout for All Stocks Master Map Grid...")
+    # 6. Build HTML structure for All Stocks Master Map Grid (Organized by Main Category -> Mid Concept Cluster)
+    print("Generating HTML layout for All Stocks Master Map Grid with Mid Concept Clusters...")
     grid_html = []
     
     # Sort main categories by 1D performance descending
@@ -679,24 +679,24 @@ def run_pipeline():
             <div class="sub-category-list" style="display: none; flex-direction: column; gap: 12px;">
         """)
         
-        grouped_sub = main_group.groupby("sub_cat")
-        for sub_name, sub_group in grouped_sub:
-            sub_safe_id = get_safe_id(main_name + "_" + sub_name)
-            sub_group_sorted = sub_group.sort_values(by="market_cap", ascending=False)
+        grouped_mid = main_group.groupby("mid_cat")
+        for mid_name, mid_group in grouped_mid:
+            mid_safe_id = get_safe_id(main_name + "_" + mid_name)
+            mid_group_sorted = mid_group.sort_values(by="market_cap", ascending=False)
             
             main_html.append(f"""
-                <div class="sub-section" id="{sub_safe_id}">
-                    <div class="sub-header" onclick="toggleSubSection('{sub_safe_id}')" style="cursor: pointer;">
-                        <span class="sub-title"><span class="toggle-arrow">▶</span> {sub_name}</span>
+                <div class="sub-section" id="{mid_safe_id}">
+                    <div class="sub-header" onclick="toggleSubSection('{mid_safe_id}')" style="cursor: pointer; user-select: none;">
+                        <span class="sub-title"><span class="toggle-arrow">▶</span> 📁 {mid_name}</span>
                         <div>
-                            <span class="sub-count-badge">{len(sub_group_sorted)} 檔</span>
-                            <span class="sub-change-badge" id="badge-{sub_safe_id}">--</span>
+                            <span class="sub-count-badge">{len(mid_group_sorted)} 檔個股</span>
+                            <span class="sub-change-badge" id="badge-{mid_safe_id}">--</span>
                         </div>
                     </div>
                     <div class="stock-grid" style="display: none;">
             """)
             
-            for _, row in sub_group_sorted.iterrows():
+            for _, row in mid_group_sorted.iterrows():
                 ticker_clean = row["ticker"].replace(".", "_")
                 ticker_short = row["ticker"].split('.')[0]
                 
@@ -704,7 +704,7 @@ def run_pipeline():
                 c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
                 c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
                 
-                title_tooltip = f"股名: {row['name']}\\n代號: {row['ticker']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%"
+                title_tooltip = f"股名: {row['name']}\n代號: {row['ticker']}\n中型族群: {mid_name}\n細分次產業: {row['sub_cat']}\n1D: {c_1d}%\n5D: {c_5d}%\n10D: {c_10d}%"
                 
                 main_html.append(f"""
                         <div class="stock-pill" 
@@ -712,12 +712,14 @@ def run_pipeline():
                              data-ticker="{ticker_short}" 
                              data-name="{row['name']}"
                              data-main-cat="{main_name}"
-                             data-sub-cat="{sub_name}"
+                             data-mid-cat="{mid_name}"
+                             data-sub-cat="{row['sub_cat']}"
                              data-1d="{c_1d}" 
                              data-5d="{c_5d}" 
                              data-10d="{c_10d}" 
                              title="{title_tooltip}">
                              <span class="s-name">{row['name']}</span>
+                             <span class="s-subtag">{row['sub_cat']}</span>
                              <span class="s-change" id="change-text-{ticker_clean}">--</span>
                         </div>
                 """)
@@ -732,7 +734,7 @@ def run_pipeline():
         </div>
         """)
         grid_html.append("".join(main_html))
-        
+    
     all_grid_elements_html = "\n".join(grid_html)
     
     # 7. Write HTML Page
@@ -1060,6 +1062,17 @@ def run_pipeline():
             padding-top: 6px;
         }}
         
+        
+        .s-subtag {{
+            font-size: 0.7rem;
+            color: rgba(255, 255, 255, 0.45);
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 4px;
+            margin-right: auto;
+        }}
+    
         .stock-pill {{
             background: rgba(75, 85, 99, 0.15);
             border: 1px solid rgba(255, 255, 255, 0.04);
