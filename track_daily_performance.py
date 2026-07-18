@@ -1392,16 +1392,18 @@ def run_pipeline():
             
             <!-- Sub-sectors & Mid-clusters Averages Rankings -->
             <div class="side-card">
-                <div class="rank-tabs">
-                    <button class="rank-tab-btn active" id="btn-sub-mid" onclick="switchSubRank('mid_leaders')">🔥 中型概念族群</button>
-                    <button class="rank-tab-btn" id="btn-sub-leaders" onclick="switchSubRank('leaders')">🔥 領漲次產業</button>
-                    <button class="rank-tab-btn" id="btn-sub-laggards" onclick="switchSubRank('laggards')">❄️ 領跌次產業</button>
+                <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">📊 族群與產業強弱排行榜</h2>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 12px;">(點擊下方頁籤，切換「強勢中型族群」與「細分次產業」)</p>
+                <div class="rank-tabs" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+                    <button class="rank-tab-btn active" id="btn-sub-mid" onclick="switchSubRank('mid_leaders')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">🔥 強勢中型族群</button>
+                    <button class="rank-tab-btn" id="btn-sub-leaders" onclick="switchSubRank('leaders')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">🔥 強勢細分產業</button>
+                    <button class="rank-tab-btn" id="btn-sub-laggards" onclick="switchSubRank('laggards')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">❄️ 弱勢細分產業</button>
                 </div>
                 
                 <table>
                     <thead>
                         <tr>
-                            <th>族群分類</th>
+                            <th>族群 / 產業名稱</th>
                             <th>平均漲跌</th>
                             <th>股數</th>
                         </tr>
