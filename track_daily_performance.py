@@ -564,9 +564,10 @@ def run_pipeline():
         for _, row in sub_perf.iterrows():
             mName = row["main_cat"]
             sName = row["sub_cat"]
+            mdName = sub_to_mid_lookup.get((mName, sName), sName)
             sub_gp_map[f"{mName} - {sName}"] = {
                 "avg": row["avg_change"],
-                "safe_id": get_safe_id(mName + "_" + sName)
+                "safe_id": get_safe_id(mName + "_" + mdName + "_" + sName)
             }
             
         mid_gp_map = {}
@@ -1782,10 +1783,23 @@ def run_pipeline():
                     const parentGrid = pill.closest('.stock-grid');
                     if (parentGrid) {{
                         parentGrid.style.display = 'grid';
-                        const subSection = parentGrid.closest('.sub-section');
-                        if (subSection) {{
-                            const arrow = subSection.querySelector('.toggle-arrow');
-                            if (arrow) arrow.innerText = '▼';
+                        
+                        // Expand mid level
+                        const midContent = parentGrid.closest('.mid-content');
+                        if (midContent) {{
+                            midContent.style.display = 'flex';
+                            const subSection = midContent.closest('.sub-section');
+                            if (subSection) {{
+                                const arrow = subSection.querySelector('.toggle-arrow');
+                                if (arrow) arrow.innerText = '▼';
+                            }}
+                        }}
+                        
+                        // Expand sub level
+                        const subSubSection = parentGrid.closest('.sub-sub-section');
+                        if (subSubSection) {{
+                            const subArrow = subSubSection.querySelector('.toggle-sub-arrow');
+                            if (subArrow) subArrow.innerText = '▼';
                         }}
                     }}
                     
@@ -2090,7 +2104,7 @@ def run_pipeline():
             // 3. Update all Card Headers (Main categories and sub categories averages) and re-order cards
             for (const [mName, mInfo] of Object.entries(pData.main_gp)) {{
                 const badge = document.getElementById("badge-" + mInfo.safe_id);
-                if (badge) {{
+                if (badge && typeof mInfo.avg === 'number' && !isNaN(mInfo.avg)) {{
                     const sign = mInfo.avg >= 0 ? '+' : '';
                     badge.innerText = `${{sign}}${{mInfo.avg.toFixed(2)}}%`;
                     badge.style.backgroundColor = getIntensityColor(mInfo.avg, period);
@@ -2106,7 +2120,7 @@ def run_pipeline():
             if (pData.mid_gp) {{
                 for (const [keyStr, mInfo] of Object.entries(pData.mid_gp)) {{
                     const badge = document.getElementById("badge-" + mInfo.safe_id);
-                    if (badge) {{
+                    if (badge && typeof mInfo.avg === 'number' && !isNaN(mInfo.avg)) {{
                         const sign = mInfo.avg >= 0 ? '+' : '';
                         badge.innerText = `${{sign}}${{mInfo.avg.toFixed(2)}}%`;
                         badge.style.color = mInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
@@ -2116,13 +2130,15 @@ def run_pipeline():
             }}
             
             // Sub headers
-            for (const [keyStr, sInfo] of Object.entries(pData.sub_gp)) {{
-                const badge = document.getElementById("badge-" + sInfo.safe_id);
-                if (badge) {{
-                    const sign = sInfo.avg >= 0 ? '+' : '';
-                    badge.innerText = `${{sign}}${{sInfo.avg.toFixed(2)}}%`;
-                    badge.style.color = sInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
-                    if (sInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
+            if (pData.sub_gp) {{
+                for (const [keyStr, sInfo] of Object.entries(pData.sub_gp)) {{
+                    const badge = document.getElementById("badge-" + sInfo.safe_id);
+                    if (badge && typeof sInfo.avg === 'number' && !isNaN(sInfo.avg)) {{
+                        const sign = sInfo.avg >= 0 ? '+' : '';
+                        badge.innerText = `${{sign}}${{sInfo.avg.toFixed(2)}}%`;
+                        badge.style.color = sInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
+                        if (sInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
+                    }}
                 }}
             }}
             
