@@ -46927,32 +46927,46 @@
             });
         }
         
-        // Switch between Sub-sector Leaders and Laggards
+        let currentRankScope = 'mid'; // 'mid' or 'sub'
+        let currentRankDir = 'leaders'; // 'leaders' or 'laggards'
+
+        function setRankScope(scope) {
+            currentRankScope = scope;
+            const btnMid = document.getElementById('btn-scope-mid');
+            const btnSub = document.getElementById('btn-scope-sub');
+            if (btnMid) btnMid.classList.toggle('active', scope === 'mid');
+            if (btnSub) btnSub.classList.toggle('active', scope === 'sub');
+            renderSubRankTable();
+        }
+
+        function setRankDir(dir) {
+            currentRankDir = dir;
+            const btnLeaders = document.getElementById('btn-dir-leaders');
+            const btnLaggards = document.getElementById('btn-dir-laggards');
+            if (btnLeaders) btnLeaders.classList.toggle('active', dir === 'leaders');
+            if (btnLaggards) btnLaggards.classList.toggle('active', dir === 'laggards');
+            renderSubRankTable();
+        }
+
         function switchSubRank(tab) {
-            currentSubRankTab = tab;
-            
-            const btnLeaders = document.getElementById('btn-sub-leaders');
-            const btnLaggards = document.getElementById('btn-sub-laggards');
-            
-            if (tab === 'leaders') {
-                btnLeaders.classList.add('active');
-                btnLaggards.classList.remove('active');
-            } else {
-                btnLeaders.classList.remove('active');
-                btnLaggards.classList.add('active');
-            }
-            
-            const list = payload[currentPeriod][tab === 'leaders' ? 'sub_leaders' : 'sub_laggards'];
+            renderSubRankTable();
+        }
+
+        function renderSubRankTable() {
+            const listKey = currentRankScope + '_' + currentRankDir;
+            const list = (payload[currentPeriod] && payload[currentPeriod][listKey]) || [];
             const tbody = document.getElementById('sub-rank-table-body');
+            if (!tbody) return;
             tbody.innerHTML = '';
             
             list.forEach(r => {
                 const classColor = r.avg_change >= 0 ? 'up' : 'down';
                 const sign = r.avg_change >= 0 ? '+' : '';
+                const catName = r.mid_cat || r.sub_cat;
                 
                 tbody.innerHTML += `
-                    <tr onclick="focusSubSection('${r.safe_id}')" title="點擊展開並捲動定位到該次產業">
-                        <td><strong>${r.sub_cat}</strong><br/><span style="font-size:0.75rem;color:var(--text-secondary);">${r.main_cat}</span></td>
+                    <tr onclick="focusSubSection('${r.safe_id}')" title="點擊展開並捲動定位到該族群">
+                        <td><strong>${catName}</strong><br/><span style="font-size:0.75rem;color:var(--text-secondary);">${r.main_cat}</span></td>
                         <td class="${classColor}">${sign}${r.avg_change.toFixed(2)}%</td>
                         <td><span class="tag">${r.count} 檔</span></td>
                     </tr>

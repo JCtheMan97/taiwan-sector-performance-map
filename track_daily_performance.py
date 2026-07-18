@@ -589,6 +589,15 @@ def run_pipeline():
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
                 } for _, r in mid_leaders.iterrows()
             ],
+            "mid_laggards": [
+                {
+                    "main_cat": r["main_cat"],
+                    "mid_cat": r["mid_cat"],
+                    "avg_change": r["avg_change"],
+                    "count": int(r["count"]),
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
+                } for _, r in mid_laggards.iterrows()
+            ],
             "leaders": [{"ticker": r["ticker"].split('.')[0], "name": r["name"], "change": r["change"], "sub_cat": r["sub_cat"]} for _, r in leaders.iterrows()],
             "laggards": [{"ticker": r["ticker"].split('.')[0], "name": r["name"], "change": r["change"], "sub_cat": r["sub_cat"]} for _, r in laggards.iterrows()],
             "sub_leaders": [
@@ -1393,11 +1402,18 @@ def run_pipeline():
             <!-- Sub-sectors & Mid-clusters Averages Rankings -->
             <div class="side-card">
                 <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">📊 族群與產業強弱排行榜</h2>
-                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 12px;">(點擊下方頁籤，切換「強勢中型族群」與「細分次產業」)</p>
-                <div class="rank-tabs" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
-                    <button class="rank-tab-btn active" id="btn-sub-mid" onclick="switchSubRank('mid_leaders')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">🔥 強勢中型族群</button>
-                    <button class="rank-tab-btn" id="btn-sub-leaders" onclick="switchSubRank('leaders')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">🔥 強勢細分產業</button>
-                    <button class="rank-tab-btn" id="btn-sub-laggards" onclick="switchSubRank('laggards')" style="flex: 1; min-width: 100px; padding: 6px 8px; font-size: 0.8rem;">❄️ 弱勢細分產業</button>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 10px;">(切換「分類層級」與「領漲/領跌」查看 Top 10 排行榜)</p>
+                
+                <!-- Toggle Row 1: Category Scope -->
+                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                    <button class="rank-tab-btn active" id="btn-scope-mid" onclick="setRankScope('mid')" style="flex: 1; padding: 6px; font-size: 0.8rem;">📁 中型概念族群</button>
+                    <button class="rank-tab-btn" id="btn-scope-sub" onclick="setRankScope('sub')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🏷️ 細分次產業</button>
+                </div>
+                
+                <!-- Toggle Row 2: Direction -->
+                <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+                    <button class="rank-tab-btn active" id="btn-dir-leaders" onclick="setRankDir('leaders')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🔥 強勢領漲 Top 10</button>
+                    <button class="rank-tab-btn" id="btn-dir-laggards" onclick="setRankDir('laggards')" style="flex: 1; padding: 6px; font-size: 0.8rem;">❄️ 弱勢領跌 Top 10</button>
                 </div>
                 
                 <table>
@@ -2103,7 +2119,7 @@ def run_pipeline():
             
             // 5. Update Rank Tables
             switchRank(currentRankTab);
-            switchSubRank(currentSubRankTab);
+            renderSubRankTable();
         }}
         
         // Switch between Leaders and Laggards
@@ -2137,32 +2153,46 @@ def run_pipeline():
             }});
         }}
         
-        // Switch between Sub-sector Leaders and Laggards
+        let currentRankScope = 'mid'; // 'mid' or 'sub'
+        let currentRankDir = 'leaders'; // 'leaders' or 'laggards'
+
+        function setRankScope(scope) {{
+            currentRankScope = scope;
+            const btnMid = document.getElementById('btn-scope-mid');
+            const btnSub = document.getElementById('btn-scope-sub');
+            if (btnMid) btnMid.classList.toggle('active', scope === 'mid');
+            if (btnSub) btnSub.classList.toggle('active', scope === 'sub');
+            renderSubRankTable();
+        }}
+
+        function setRankDir(dir) {{
+            currentRankDir = dir;
+            const btnLeaders = document.getElementById('btn-dir-leaders');
+            const btnLaggards = document.getElementById('btn-dir-laggards');
+            if (btnLeaders) btnLeaders.classList.toggle('active', dir === 'leaders');
+            if (btnLaggards) btnLaggards.classList.toggle('active', dir === 'laggards');
+            renderSubRankTable();
+        }}
+
         function switchSubRank(tab) {{
-            currentSubRankTab = tab;
-            
-            const btnLeaders = document.getElementById('btn-sub-leaders');
-            const btnLaggards = document.getElementById('btn-sub-laggards');
-            
-            if (tab === 'leaders') {{
-                btnLeaders.classList.add('active');
-                btnLaggards.classList.remove('active');
-            }} else {{
-                btnLeaders.classList.remove('active');
-                btnLaggards.classList.add('active');
-            }}
-            
-            const list = payload[currentPeriod][tab === 'leaders' ? 'sub_leaders' : 'sub_laggards'];
+            renderSubRankTable();
+        }}
+
+        function renderSubRankTable() {{
+            const listKey = currentRankScope + '_' + currentRankDir;
+            const list = (payload[currentPeriod] && payload[currentPeriod][listKey]) || [];
             const tbody = document.getElementById('sub-rank-table-body');
+            if (!tbody) return;
             tbody.innerHTML = '';
             
             list.forEach(r => {{
                 const classColor = r.avg_change >= 0 ? 'up' : 'down';
                 const sign = r.avg_change >= 0 ? '+' : '';
+                const catName = r.mid_cat || r.sub_cat;
                 
                 tbody.innerHTML += `
-                    <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該次產業">
-                        <td><strong>${{r.sub_cat}}</strong><br/><span style="font-size:0.75rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
+                    <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群">
+                        <td><strong>${{catName}}</strong><br/><span style="font-size:0.75rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
                         <td class="${{classColor}}">${{sign}}${{r.avg_change.toFixed(2)}}%</td>
                         <td><span class="tag">${{r.count}} 檔</span></td>
                     </tr>
