@@ -35,7 +35,7 @@ REPORT_HTML = "daily_sector_performance.html"
 
 # Import mappings from classify_all_database
 try:
-    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name, KEYWORD_THESAURUS, advanced_has_kw, clean_category
+    from classify_all_database import STOCK_SUBCLASS, CLEAN_SUBCLASS, DETAILED_SECTOR_MAP, clean_stock_name, KEYWORD_THESAURUS, advanced_has_kw, clean_category, get_mid_category
 except ImportError:
     print("Warning: Could not import classification mappings. Defining fallbacks...")
     STOCK_SUBCLASS = {}
@@ -255,9 +255,11 @@ def run_pipeline():
         profile = cache.get(ticker, {})
         main_cat, sub_cat = get_categories(name, profile, ticker)
         # market_cap will be updated later with real data (shares × price)
+        mid_cat = get_mid_category(name, main_cat, sub_cat)
         stock_mapping[ticker] = {
             "name": name,
             "main_cat": main_cat,
+            "mid_cat": mid_cat,
             "sub_cat": sub_cat,
             "market_cap": 1_000_000_000  # temporary placeholder
         }
@@ -417,10 +419,12 @@ def run_pipeline():
         val_5d = dict_5d.get(ticker, None)
         val_10d = dict_10d.get(ticker, None)
         
+        mid_cat = mapping.get("mid_cat") or get_mid_category(mapping["name"], mapping["main_cat"], mapping["sub_cat"])
         all_records.append({
             "ticker": ticker,
             "name": mapping["name"],
             "main_cat": mapping["main_cat"],
+            "mid_cat": mid_cat,
             "sub_cat": mapping["sub_cat"],
             "market_cap": mapping["market_cap"],
             "change_1d": val_1d,
@@ -446,10 +450,12 @@ def run_pipeline():
             mapping = stock_mapping.get(ticker)
             if not mapping:
                 continue
+            mid_cat = mapping.get("mid_cat") or get_mid_category(mapping["name"], mapping["main_cat"], mapping["sub_cat"])
             records.append({
                 "ticker": ticker,
                 "name": mapping["name"],
                 "main_cat": mapping["main_cat"],
+                "mid_cat": mid_cat,
                 "sub_cat": mapping["sub_cat"],
                 "market_cap": mapping["market_cap"],
                 "change": change
@@ -468,8 +474,19 @@ def run_pipeline():
             count=('change', 'count')
         ).reset_index().sort_values(by="avg_change", ascending=False)
         
+        # Calculate Mid sector average (FILTER: count >= 2 to highlight mid clusters)
+        mid_perf = df_rec.groupby(["main_cat", "mid_cat"]).agg(
+            avg_change=('change', 'mean'),
+            count=('change', 'count')
+        ).reset_index()
+        mid_perf_filtered = mid_perf[mid_perf['count'] >= 2]
+        mid_leaders = mid_perf_filtered.sort_values(by="avg_change", ascending=False).head(10)
+        mid_laggards = mid_perf_filtered.sort_values(by="avg_change", ascending=True).head(10)
+        
         md_reports[key] = {
             "main": main_perf.copy(),
+            "mid_leaders": mid_leaders.copy(),
+            "mid_laggards": mid_laggards.copy(),
             "df_rec": df_rec.copy()
         }
         
@@ -484,28 +501,40 @@ def run_pipeline():
         sub_leaders = sub_perf_filtered.sort_values(by="avg_change", ascending=False).head(10)
         sub_laggards = sub_perf_filtered.sort_values(by="avg_change", ascending=True).head(10)
         
-        # Treemap data structure
+        # Treemap 3-Level Data Structure (Main -> Mid -> Sub -> Stock)
         treemap_data = []
         for main_name, main_group in df_rec.groupby("main_cat"):
             main_children = []
-            for sub_name, sub_group in main_group.groupby("sub_cat"):
-                sub_children = []
-                for _, row in sub_group.iterrows():
-                    sub_children.append({
-                        "name": f"{row['name']}\n({row['change']:+.2f}%)" if pd.notna(row['change']) else f"{row['name']}\n(--%)",
-                        "value": [int(row['market_cap'] / 1_000_000), row['change'] if pd.notna(row['change']) else 0],
-                        "change": row['change'] if pd.notna(row['change']) else 0,
-                        "ticker": str(row['ticker']).split(".")[0].strip()
+            for mid_name, mid_group in main_group.groupby("mid_cat"):
+                mid_children = []
+                for sub_name, sub_group in mid_group.groupby("sub_cat"):
+                    sub_children = []
+                    for _, row in sub_group.iterrows():
+                        sub_children.append({
+                            "name": f"{row['name']}\n({row['change']:+.2f}%)" if pd.notna(row['change']) else f"{row['name']}\n(--%)",
+                            "value": [int(row['market_cap'] / 1_000_000), row['change'] if pd.notna(row['change']) else 0],
+                            "change": row['change'] if pd.notna(row['change']) else 0,
+                            "ticker": str(row['ticker']).split(".")[0].strip()
+                        })
+                    sub_children = sorted(sub_children, key=lambda x: x['value'][0], reverse=True)
+                    sub_avg_change = sub_group['change'].mean()
+                    if pd.isna(sub_avg_change):
+                        sub_avg_change = 0
+                    mid_children.append({
+                        "name": f"{sub_name} ({sub_avg_change:+.2f}%)",
+                        "value": [sum([x['value'][0] for x in sub_children]), sub_avg_change],
+                        "change": sub_avg_change,
+                        "children": sub_children
                     })
-                sub_children = sorted(sub_children, key=lambda x: x['value'][0], reverse=True)
-                sub_avg_change = sub_group['change'].mean()
-                if pd.isna(sub_avg_change):
-                    sub_avg_change = 0
+                mid_children = sorted(mid_children, key=lambda x: x['value'][0], reverse=True)
+                mid_avg_change = mid_group['change'].mean()
+                if pd.isna(mid_avg_change):
+                    mid_avg_change = 0
                 main_children.append({
-                    "name": f"{sub_name} ({sub_avg_change:+.2f}%)",
-                    "value": [sum([x['value'][0] for x in sub_children]), sub_avg_change],
-                    "change": sub_avg_change,
-                    "children": sub_children
+                    "name": f"{mid_name} ({mid_avg_change:+.2f}%)",
+                    "value": [sum([x['value'][0] for x in mid_children]), mid_avg_change],
+                    "change": mid_avg_change,
+                    "children": mid_children
                 })
             main_children = sorted(main_children, key=lambda x: x['value'][0], reverse=True)
             main_avg_change = main_group['change'].mean()
@@ -537,10 +566,29 @@ def run_pipeline():
                 "safe_id": get_safe_id(mName + "_" + sName)
             }
             
+        mid_gp_map = {}
+        for _, row in mid_perf.iterrows():
+            mName = row["main_cat"]
+            mdName = row["mid_cat"]
+            mid_gp_map[f"{mName} - {mdName}"] = {
+                "avg": row["avg_change"],
+                "safe_id": get_safe_id(mName + "_" + mdName)
+            }
+
         payload[key] = {
             "treemap": treemap_data,
             "main_gp": main_gp_map,
+            "mid_gp": mid_gp_map,
             "sub_gp": sub_gp_map,
+            "mid_leaders": [
+                {
+                    "main_cat": r["main_cat"],
+                    "mid_cat": r["mid_cat"],
+                    "avg_change": r["avg_change"],
+                    "count": int(r["count"]),
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
+                } for _, r in mid_leaders.iterrows()
+            ],
             "leaders": [{"ticker": r["ticker"].split('.')[0], "name": r["name"], "change": r["change"], "sub_cat": r["sub_cat"]} for _, r in leaders.iterrows()],
             "laggards": [{"ticker": r["ticker"].split('.')[0], "name": r["name"], "change": r["change"], "sub_cat": r["sub_cat"]} for _, r in laggards.iterrows()],
             "sub_leaders": [
@@ -594,6 +642,17 @@ def run_pipeline():
             sign = "+" if row['avg_change'] > 0 else ""
             md_lines.append(f"| {row['main_cat']} | {emoji} {sign}{row['avg_change']:.2f}% | {int(row['count'])} 檔 |")
         md_lines.append("\n")
+        
+        mid_leaders = p_data.get("mid_leaders")
+        if mid_leaders is not None and not mid_leaders.empty:
+            md_lines.append(f"### 🔥 {p_name} 強勢領漲【中型概念族群】 Top 10")
+            md_lines.append("| 排名 | 主產業分類 | 中型概念族群 | 平均漲跌 | 包含個股數 |")
+            md_lines.append("| :--- | :--- | :--- | :--- | :--- |")
+            for r_idx, (_, row) in enumerate(mid_leaders.iterrows(), 1):
+                emoji = "🔴" if row['avg_change'] > 0 else ("🟢" if row['avg_change'] < 0 else "⚪")
+                sign = "+" if row['avg_change'] > 0 else ""
+                md_lines.append(f"| #{r_idx} | {row['main_cat']} | **{row['mid_cat']}** | {emoji} {sign}{row['avg_change']:.2f}% | {int(row['count'])} 檔 |")
+            md_lines.append("\n")
         
     with open(REPORT_MD, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
