@@ -32358,17 +32358,18 @@
                 </div>
             </div>
             
-            <!-- Sub-sectors Averages Rankings -->
+            <!-- Sub-sectors & Mid-clusters Averages Rankings -->
             <div class="side-card">
                 <div class="rank-tabs">
-                    <button class="rank-tab-btn active" id="btn-sub-leaders" onclick="switchSubRank('leaders')">🔥 領漲產業</button>
-                    <button class="rank-tab-btn" id="btn-sub-laggards" onclick="switchSubRank('laggards')">❄️ 領跌產業</button>
+                    <button class="rank-tab-btn active" id="btn-sub-mid" onclick="switchSubRank('mid_leaders')">🔥 中型概念族群</button>
+                    <button class="rank-tab-btn" id="btn-sub-leaders" onclick="switchSubRank('leaders')">🔥 領漲次產業</button>
+                    <button class="rank-tab-btn" id="btn-sub-laggards" onclick="switchSubRank('laggards')">❄️ 領跌次產業</button>
                 </div>
                 
                 <table>
                     <thead>
                         <tr>
-                            <th>次產業分類</th>
+                            <th>族群分類</th>
                             <th>平均漲跌</th>
                             <th>股數</th>
                         </tr>
@@ -32934,6 +32935,19 @@
                 const card = document.getElementById(mInfo.safe_id);
                 if (card) {
                     card.style.order = mInfo.rank;
+                }
+            }
+            
+            // Mid headers
+            if (pData.mid_gp) {
+                for (const [keyStr, mInfo] of Object.entries(pData.mid_gp)) {
+                    const badge = document.getElementById("badge-" + mInfo.safe_id);
+                    if (badge) {
+                        const sign = mInfo.avg >= 0 ? '+' : '';
+                        badge.innerText = `${sign}${mInfo.avg.toFixed(2)}%`;
+                        badge.style.color = mInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
+                        if (mInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
+                    }
                 }
             }
             
