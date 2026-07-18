@@ -276,7 +276,7 @@ def run_pipeline():
         chunk = tickers[i:i+chunk_size]
         print(f"Downloading chunk {i // chunk_size + 1} / {len(tickers) // chunk_size + 1}...")
         try:
-            df = yf.download(chunk, period="30d", progress=False, group_by='column')
+            df = yf.download(chunk, period="45d", progress=False, group_by='column')
             
             closes_chunk = pd.DataFrame(index=df.index)
             volumes_chunk = pd.DataFrame(index=df.index)
@@ -393,7 +393,7 @@ def run_pipeline():
     prev_date_str = str(valid_df.index[-2].date())
     print(f"Trading date: {date_str}. Total valid trading days loaded: {num_days}.")
     
-    # Calculate returns vectorised for 1D, 5D, and 10D
+    # Calculate returns vectorised for 1D, 5D, 10D, and 20D
     change_1d = ((valid_df.iloc[-1] - valid_df.iloc[-2]) / valid_df.iloc[-2]) * 100
     
     idx_5d = -6 if num_days >= 6 else 0
@@ -402,15 +402,20 @@ def run_pipeline():
     idx_10d = -11 if num_days >= 11 else 0
     change_10d = ((valid_df.iloc[-1] - valid_df.iloc[idx_10d]) / valid_df.iloc[idx_10d]) * 100
     
+    idx_20d = -21 if num_days >= 21 else 0
+    change_20d = ((valid_df.iloc[-1] - valid_df.iloc[idx_20d]) / valid_df.iloc[idx_20d]) * 100
+    
     # Clean anomalies (e.g. capital reduction multipliers)
     change_1d = change_1d[(change_1d >= -11) & (change_1d <= 11)].dropna()
     change_5d = change_5d[(change_5d >= -45) & (change_5d <= 80)].dropna()
     change_10d = change_10d[(change_10d >= -60) & (change_10d <= 120)].dropna()
+    change_20d = change_20d[(change_20d >= -75) & (change_20d <= 180)].dropna()
     
     # Pack returns into dictionaries
     dict_1d = change_1d.to_dict()
     dict_5d = change_5d.to_dict()
     dict_10d = change_10d.to_dict()
+    dict_20d = change_20d.to_dict()
     
     # Create unified master records
     all_records = []
@@ -418,6 +423,7 @@ def run_pipeline():
         val_1d = dict_1d.get(ticker, None)
         val_5d = dict_5d.get(ticker, None)
         val_10d = dict_10d.get(ticker, None)
+        val_20d = dict_20d.get(ticker, None)
         
         mid_cat = mapping.get("mid_cat") or get_mid_category(mapping["name"], mapping["main_cat"], mapping["sub_cat"])
         all_records.append({
@@ -429,7 +435,8 @@ def run_pipeline():
             "market_cap": mapping["market_cap"],
             "change_1d": val_1d,
             "change_5d": val_5d,
-            "change_10d": val_10d
+            "change_10d": val_10d,
+            "change_20d": val_20d
         })
         
     df_all = pd.DataFrame(all_records)
@@ -456,11 +463,12 @@ def run_pipeline():
     sector_vol_share = sector_dollar_vol.div(market_total_vol, axis=0) * 100
     # ─────────────────────────────────────────
     
-    # 4. Multi-period statistics calculation (1D, 5D, 10D)
+    # 4. Multi-period statistics calculation (1D, 5D, 10D, 20D)
     periods = {
         "1d": dict_1d,
         "5d": dict_5d,
-        "10d": dict_10d
+        "10d": dict_10d,
+        "20d": dict_20d
     }
     
     payload = {}
@@ -478,11 +486,16 @@ def run_pipeline():
             share = sector_vol_share.iloc[-5:].mean()
             tci = (sector_returns.iloc[-5:] > 0).sum() / 5
             vol = sector_returns.iloc[-5:].std()
-        else: # 10d
+        elif key == "10d":
             ver = sector_dollar_vol.iloc[-10:].mean() / sector_dollar_vol.mean()
             share = sector_vol_share.iloc[-10:].mean()
             tci = (sector_returns.iloc[-10:] > 0).sum() / 10
             vol = sector_returns.iloc[-10:].std()
+        else: # 20d
+            ver = sector_dollar_vol.iloc[-20:].mean() / sector_dollar_vol.mean()
+            share = sector_vol_share.iloc[-20:].mean()
+            tci = (sector_returns.iloc[-20:] > 0).sum() / 20
+            vol = sector_returns.iloc[-20:].std()
             
         ver = ver.fillna(1.0).replace([np.inf, -np.inf], 1.0)
         share = share.fillna(0.0)
@@ -537,10 +550,10 @@ def run_pipeline():
         
         # Calculate Quiet Risers
         if key != "1d":
-            min_change = 0.8 if key == "5d" else 1.5
-            max_change = 8.0 if key == "5d" else 15.0
+            min_change = 0.8 if key == "5d" else (1.5 if key == "10d" else 3.0)
+            max_change = 8.0 if key == "5d" else (15.0 if key == "10d" else 25.0)
             min_tci = 0.6
-            max_vol = 2.5
+            max_vol = 2.5 if key != "20d" else 3.0
             
             qr_df = mid_perf[
                 (mid_perf['avg_change'] >= min_change) &
@@ -872,10 +885,11 @@ def run_pipeline():
                     c_1d = f"{row['change_1d']:.2f}" if pd.notna(row['change_1d']) else "null"
                     c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
                     c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
-                    title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%"
+                    c_20d = f"{row['change_20d']:.2f}" if pd.notna(row['change_20d']) else "null"
+                    title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%\\n20D: {c_20d}%"
                     
                     main_html.append(f"""
-                            <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" title="{title_tooltip}">
+                            <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" title="{title_tooltip}">
                                  <span class="s-name">{row['name']}</span>
                                  <span class="s-change" id="change-text-{ticker_clean}">--</span>
                             </div>
@@ -906,10 +920,11 @@ def run_pipeline():
                         c_1d = f"{row['change_1d']:.2f}" if pd.notna(row['change_1d']) else "null"
                         c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
                         c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
-                        title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%"
+                        c_20d = f"{row['change_20d']:.2f}" if pd.notna(row['change_20d']) else "null"
+                        title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%\\n20D: {c_20d}%"
                         
                         main_html.append(f"""
-                                <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" title="{title_tooltip}">
+                                <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" title="{title_tooltip}">
                                      <span class="s-name">{row['name']}</span>
                                      <span class="s-change" id="change-text-{ticker_clean}">--</span>
                                 </div>
@@ -1590,6 +1605,7 @@ def run_pipeline():
                     <button class="tab-btn active" onclick="switchPeriod('1d')">今日漲跌 (1D)</button>
                     <button class="tab-btn" onclick="switchPeriod('5d')">週累積 (5D)</button>
                     <button class="tab-btn" onclick="switchPeriod('10d')">雙週累積 (10D)</button>
+                    <button class="tab-btn" onclick="switchPeriod('20d')">月累積 (20D)</button>
                 </div>
                 
                 <div class="global-controls">
@@ -1706,6 +1722,18 @@ def run_pipeline():
                         <!-- Dynamic -->
                     </tbody>
                 </table>
+            </div>
+            
+            <!-- Icon & Indicator Legend Explanations -->
+            <div class="side-card" style="padding: 12px; font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); background: rgba(255,255,255,0.01); border: 1px dashed rgba(255,255,255,0.08);">
+                <h3 style="font-size: 0.9rem; font-weight: 700; margin-bottom: 8px; color: #f3f4f6; display: flex; align-items: center; gap: 6px;">💡 指標與圖例說明</h3>
+                <ul style="list-style-type: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <li>🐢 <strong style="color: var(--taiwan-up);">緩漲黑馬</strong>：過去 5D/10D/20D 累積溫和上漲、收紅天數佔比高（&ge; 60%）、日均波動度低，通常為主力默默進貨之低調起漲族群。</li>
+                    <li>📊 <strong style="color: #60a5fa;">5日資金比重走勢 (Sparkline)</strong>：顯示過去 5 日該板塊佔大盤成交金額的比重走勢。柱子越長代表比重越高；柱子持續走高代表資金正在持續流入。</li>
+                    <li>🔥 <strong style="color: var(--taiwan-up);">資金淨流入</strong>：結合價量，指板塊「上漲」且「量能比 (VER)」大於 1.0 的板塊，分數越高代表量價俱揚越顯著。</li>
+                    <li>⚠️ <strong style="color: var(--taiwan-down);">資金淨流出</strong>：結合價量，指板塊「下跌」且「量能比 (VER)」大於 1.0 的板塊，分數越低代表放量下殺越嚴重。</li>
+                    <li>📈 <strong>比重 (量能比)</strong>：今日該板塊成交金額佔全市場之百分比，括號內為 VER（當前平均成交額 / 20日基準均量，例如 1.5x 代表成交量擴增至均量的 1.5 倍）。</li>
+                </ul>
             </div>
         </aside>
     </div>
@@ -2231,6 +2259,7 @@ def run_pipeline():
             let maxVal = 8.0;
             if (period === '5d') maxVal = 18.0;
             if (period === '10d') maxVal = 28.0;
+            if (period === '20d') maxVal = 40.0;
             
             const percent = Math.min(Math.abs(change) / maxVal, 1.0);
             
@@ -2413,8 +2442,8 @@ def run_pipeline():
                 }}],
                 visualMap: {{
                     type: 'continuous',
-                    min: period === '1d' ? -5 : (period === '5d' ? -15 : -25),
-                    max: period === '1d' ? 5 : (period === '5d' ? 15 : 25),
+                    min: period === '1d' ? -5 : (period === '5d' ? -15 : (period === '10d' ? -25 : -35)),
+                    max: period === '1d' ? 5 : (period === '5d' ? 15 : (period === '10d' ? 25 : 35)),
                     visualDimension: 1,
                     calculable: true,
                     orient: 'horizontal',
