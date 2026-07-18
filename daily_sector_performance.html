@@ -15837,6 +15837,12 @@
             if (midContent.style.display === 'none' || midContent.style.display === '') {
                 midContent.style.display = 'flex';
                 if (arrow) arrow.innerText = '▼';
+                
+                // If there is a direct stock-grid child (no sub-sub-section), display it
+                const grid = midContent.querySelector('.stock-grid');
+                if (grid && !grid.closest('.sub-sub-section')) {
+                    grid.style.display = 'grid';
+                }
             } else {
                 midContent.style.display = 'none';
                 if (arrow) arrow.innerText = '▶';
@@ -16579,45 +16585,11 @@
             }, 2000);
         }
         
-        // Treemap node click interaction -> floats card to top and highlights it!
+        // Treemap node click interaction -> Zoom in/out natively for categories. Focus & scroll only for leaf stocks.
         treemapChart.on('click', function (params) {
-            if (params.data && params.data.name) {
+            if (params.data && params.data.name && params.data.ticker) {
                 const cleanName = params.data.name.split(/\n| \(/)[0].trim();
-                
-                // Filter by name (supports stock names, main sector names, and sub-sector names!)
                 focusStock(cleanName);
-                
-                // If it is a main sector or sub-sector (not a leaf stock), scroll to it specifically
-                if (!params.data.ticker) {
-                    setTimeout(() => {
-                        // Check if it is a main sector name
-                        const cards = document.querySelectorAll('.main-card');
-                        let foundSector = false;
-                        for (let card of cards) {
-                            const titleText = card.querySelector('.main-title').innerText.trim();
-                            if (titleText === cleanName) {
-                                focusSectorCard(card.id);
-                                foundSector = true;
-                                break;
-                            }
-                        }
-                        
-                        // If not a main sector, check if it is a sub-sector name
-                        if (!foundSector) {
-                            const subSections = document.querySelectorAll('.sub-section');
-                            for (let section of subSections) {
-                                const titleSpan = section.querySelector('.sub-title');
-                                if (titleSpan) {
-                                    const titleText = titleSpan.innerText.replace(/[▶▼]/g, '').trim();
-                                    if (titleText === cleanName) {
-                                        focusSubSection(section.id);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }, 100);
-                }
             }
         });
         
