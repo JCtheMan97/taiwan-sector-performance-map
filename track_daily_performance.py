@@ -501,6 +501,9 @@ def run_pipeline():
         sub_leaders = sub_perf_filtered.sort_values(by="avg_change", ascending=False).head(10)
         sub_laggards = sub_perf_filtered.sort_values(by="avg_change", ascending=True).head(10)
         
+        # Build sub_cat -> mid_cat lookup for linking sub ranking rows to mid grid sections
+        sub_to_mid_lookup = df_rec.drop_duplicates(subset=["main_cat", "sub_cat"])[["main_cat", "sub_cat", "mid_cat"]].set_index(["main_cat", "sub_cat"])["mid_cat"].to_dict()
+        
         # Treemap 3-Level Data Structure (Main -> Mid -> Sub -> Stock)
         treemap_data = []
         for main_name, main_group in df_rec.groupby("main_cat"):
@@ -606,7 +609,7 @@ def run_pipeline():
                     "sub_cat": r["sub_cat"],
                     "avg_change": r["avg_change"],
                     "count": int(r["count"]),
-                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["sub_cat"])
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + sub_to_mid_lookup.get((r["main_cat"], r["sub_cat"]), r["sub_cat"]))
                 } for _, r in sub_leaders.iterrows()
             ],
             "sub_laggards": [
@@ -615,7 +618,7 @@ def run_pipeline():
                     "sub_cat": r["sub_cat"],
                     "avg_change": r["avg_change"],
                     "count": int(r["count"]),
-                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["sub_cat"])
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + sub_to_mid_lookup.get((r["main_cat"], r["sub_cat"]), r["sub_cat"]))
                 } for _, r in sub_laggards.iterrows()
             ],
             "stats": {
@@ -2200,40 +2203,57 @@ def run_pipeline():
             }});
         }}
         
-        // Focus and scroll to sub-sector section row
+        // Focus and scroll to sub-sector / mid-cluster section row
         function focusSubSection(subSafeId) {{
-            const section = document.getElementById(subSafeId);
-            if (section) {{
-                // Expand parent main card if collapsed
-                const mainCard = section.closest('.main-card');
-                if (mainCard) {{
-                    const list = mainCard.querySelector('.sub-category-list');
-                    const arrow = mainCard.querySelector('.toggle-main-arrow');
-                    if (list && (list.style.display === 'none' || list.style.display === '')) {{
-                        list.style.display = 'flex';
-                        if (arrow) arrow.innerText = '▼';
+            let section = document.getElementById(subSafeId);
+            
+            // Fallback: if ID not found, try searching all sub-sections
+            if (!section) {{
+                const allSections = document.querySelectorAll('.sub-section');
+                for (const s of allSections) {{
+                    if (s.id && s.id === subSafeId) {{
+                        section = s;
+                        break;
                     }}
                 }}
-                
-                // Expand sub section if collapsed
-                const grid = section.querySelector('.stock-grid');
-                const arrow = section.querySelector('.toggle-arrow');
-                if (grid && (grid.style.display === 'none' || grid.style.display === '')) {{
-                    grid.style.display = 'grid';
+            }}
+            
+            if (!section) {{
+                console.warn('focusSubSection: could not find element with id:', subSafeId);
+                return;
+            }}
+            
+            // Expand parent main card if collapsed
+            const mainCard = section.closest('.main-card');
+            if (mainCard) {{
+                const list = mainCard.querySelector('.sub-category-list');
+                const arrow = mainCard.querySelector('.toggle-main-arrow');
+                if (list && (list.style.display === 'none' || list.style.display === '')) {{
+                    list.style.display = 'flex';
                     if (arrow) arrow.innerText = '▼';
                 }}
-                
-                // Now scroll to it!
-                setTimeout(() => {{
-                    section.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                }}, 50);
-                
-                // Flash border to draw attention
-                section.style.borderColor = 'var(--primary-accent)';
-                setTimeout(() => {{
-                    section.style.borderColor = 'rgba(255, 255, 255, 0.02)';
-                }}, 1500);
             }}
+            
+            // Expand sub section if collapsed
+            const grid = section.querySelector('.stock-grid');
+            const arrow = section.querySelector('.toggle-arrow');
+            if (grid && (grid.style.display === 'none' || grid.style.display === '')) {{
+                grid.style.display = 'grid';
+                if (arrow) arrow.innerText = '▼';
+            }}
+            
+            // Now scroll to it!
+            setTimeout(() => {{
+                section.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+            }}, 100);
+            
+            // Flash border to draw attention
+            section.style.borderColor = 'var(--primary-accent)';
+            section.style.boxShadow = '0 0 15px rgba(99, 102, 241, 0.4)';
+            setTimeout(() => {{
+                section.style.borderColor = 'rgba(255, 255, 255, 0.02)';
+                section.style.boxShadow = 'none';
+            }}, 2000);
         }}
         
         // Treemap node click interaction -> floats card to top and highlights it!
