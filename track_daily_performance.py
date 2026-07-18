@@ -685,7 +685,7 @@ def run_pipeline():
         main_html.append(f"""
         <div class="main-card" id="{main_safe_id}">
             <div class="main-card-header" onclick="toggleMainCard('{main_safe_id}')" style="cursor: pointer; user-select: none;">
-                <span class="main-title"><span class="toggle-main-arrow">▶</span> {main_name}</span>
+                <span class="main-title"><span class="toggle-main-arrow">\u25b6</span> {main_name}</span>
                 <span class="main-change-badge" id="badge-{main_safe_id}">--</span>
             </div>
             <div class="sub-category-list" style="display: none; flex-direction: column; gap: 12px;">
@@ -699,43 +699,83 @@ def run_pipeline():
             main_html.append(f"""
                 <div class="sub-section" id="{mid_safe_id}">
                     <div class="sub-header" onclick="toggleSubSection('{mid_safe_id}')" style="cursor: pointer; user-select: none;">
-                        <span class="sub-title"><span class="toggle-arrow">▶</span> 📁 {mid_name}</span>
+                        <span class="sub-title"><span class="toggle-arrow">\u25b6</span> \U0001f4c1 {mid_name}</span>
                         <div>
-                            <span class="sub-count-badge">{len(mid_group_sorted)} 檔個股</span>
+                            <span class="sub-count-badge">{len(mid_group_sorted)} \u6a94\u500b\u80a1</span>
                             <span class="sub-change-badge" id="badge-{mid_safe_id}">--</span>
                         </div>
                     </div>
-                    <div class="stock-grid" style="display: none;">
+                    <div class="mid-content" style="display: none; flex-direction: column; gap: 8px; padding: 4px 0 0 8px;">
             """)
             
-            for _, row in mid_group_sorted.iterrows():
-                ticker_clean = row["ticker"].replace(".", "_")
-                ticker_short = row["ticker"].split('.')[0]
-                
-                c_1d = f"{row['change_1d']:.2f}" if pd.notna(row['change_1d']) else "null"
-                c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
-                c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
-                
-                title_tooltip = f"股名: {row['name']}\n代號: {row['ticker']}\n中型族群: {mid_name}\n細分次產業: {row['sub_cat']}\n1D: {c_1d}%\n5D: {c_5d}%\n10D: {c_10d}%"
+            # Group stocks within this mid_cat by sub_cat
+            grouped_sub = mid_group_sorted.groupby("sub_cat", sort=False)
+            sub_cats_in_mid = list(grouped_sub.groups.keys())
+            
+            # If only 1 sub_cat inside this mid, skip sub header, show stocks directly
+            if len(sub_cats_in_mid) == 1:
+                sub_name = sub_cats_in_mid[0]
+                sub_group = grouped_sub.get_group(sub_name).sort_values(by="market_cap", ascending=False)
+                sub_safe_id = get_safe_id(main_name + "_" + mid_name + "_" + sub_name)
                 
                 main_html.append(f"""
-                        <div class="stock-pill" 
-                             id="stock-{ticker_clean}" 
-                             data-ticker="{ticker_short}" 
-                             data-name="{row['name']}"
-                             data-main-cat="{main_name}"
-                             data-mid-cat="{mid_name}"
-                             data-sub-cat="{row['sub_cat']}"
-                             data-1d="{c_1d}" 
-                             data-5d="{c_5d}" 
-                             data-10d="{c_10d}" 
-                             title="{title_tooltip}">
-                             <span class="s-name">{row['name']}</span>
-                             <span class="s-subtag">{row['sub_cat']}</span>
-                             <span class="s-change" id="change-text-{ticker_clean}">--</span>
-                        </div>
+                        <div class="stock-grid" id="{sub_safe_id}" style="display: grid;">
                 """)
                 
+                for _, row in sub_group.iterrows():
+                    ticker_clean = row["ticker"].replace(".", "_")
+                    ticker_short = row["ticker"].split('.')[0]
+                    c_1d = f"{row['change_1d']:.2f}" if pd.notna(row['change_1d']) else "null"
+                    c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
+                    c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
+                    title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%"
+                    
+                    main_html.append(f"""
+                            <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" title="{title_tooltip}">
+                                 <span class="s-name">{row['name']}</span>
+                                 <span class="s-change" id="change-text-{ticker_clean}">--</span>
+                            </div>
+                    """)
+                
+                main_html.append("</div>")
+            else:
+                # Multiple sub_cats: show sub-category headers (\u5c0f level)
+                for sub_name in sub_cats_in_mid:
+                    sub_group = grouped_sub.get_group(sub_name).sort_values(by="market_cap", ascending=False)
+                    sub_safe_id = get_safe_id(main_name + "_" + mid_name + "_" + sub_name)
+                    
+                    main_html.append(f"""
+                        <div class="sub-sub-section" id="{sub_safe_id}">
+                            <div class="sub-sub-header" onclick="toggleSubSubSection('{sub_safe_id}')" style="cursor: pointer; user-select: none;">
+                                <span class="sub-sub-title"><span class="toggle-sub-arrow">\u25b6</span> \U0001f3f7\ufe0f {sub_name}</span>
+                                <div>
+                                    <span class="sub-count-badge" style="font-size: 0.7rem;">{len(sub_group)} \u6a94</span>
+                                    <span class="sub-sub-change-badge" id="badge-{sub_safe_id}">--</span>
+                                </div>
+                            </div>
+                            <div class="stock-grid" style="display: none;">
+                    """)
+                    
+                    for _, row in sub_group.iterrows():
+                        ticker_clean = row["ticker"].replace(".", "_")
+                        ticker_short = row["ticker"].split('.')[0]
+                        c_1d = f"{row['change_1d']:.2f}" if pd.notna(row['change_1d']) else "null"
+                        c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
+                        c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
+                        title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%"
+                        
+                        main_html.append(f"""
+                                <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" title="{title_tooltip}">
+                                     <span class="s-name">{row['name']}</span>
+                                     <span class="s-change" id="change-text-{ticker_clean}">--</span>
+                                </div>
+                        """)
+                    
+                    main_html.append("""
+                            </div>
+                        </div>
+                    """)
+            
             main_html.append("""
                     </div>
                 </div>
@@ -746,7 +786,6 @@ def run_pipeline():
         </div>
         """)
         grid_html.append("".join(main_html))
-    
     all_grid_elements_html = "\n".join(grid_html)
     
     # 7. Write HTML Page
@@ -1059,6 +1098,50 @@ def run_pipeline():
         
         .sub-change-badge {{
             font-size: 0.85rem;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+            transition: color 0.3s;
+        }}
+        
+        /* Sub-Sub Section (小 Level - 細分次產業) */
+        .sub-sub-section {{
+            background: rgba(255, 255, 255, 0.01);
+            border-radius: 6px;
+            padding: 4px 6px;
+            border: 1px solid rgba(255, 255, 255, 0.015);
+            transition: all 0.2s;
+            margin-top: 4px;
+        }}
+        
+        .sub-sub-section:hover {{
+            background: rgba(255, 255, 255, 0.03);
+        }}
+        
+        .sub-sub-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }}
+        
+        .sub-sub-title {{
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+        }}
+        
+        .toggle-sub-arrow {{
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            margin-right: 6px;
+            display: inline-block;
+            width: 10px;
+        }}
+        
+        .sub-sub-change-badge {{
+            font-size: 0.8rem;
             font-weight: 600;
             font-family: 'Outfit', sans-serif;
             transition: color 0.3s;
@@ -1549,8 +1632,28 @@ def run_pipeline():
             const section = document.getElementById(subSafeId);
             if (!section) return;
             
-            const grid = section.querySelector('.stock-grid');
+            const midContent = section.querySelector('.mid-content');
             const arrow = section.querySelector('.toggle-arrow');
+            
+            if (!midContent) return;
+            
+            if (midContent.style.display === 'none' || midContent.style.display === '') {{
+                midContent.style.display = 'flex';
+                if (arrow) arrow.innerText = '▼';
+            }} else {{
+                midContent.style.display = 'none';
+                if (arrow) arrow.innerText = '▶';
+            }}
+        }}
+        
+        function toggleSubSubSection(subSubSafeId) {{
+            const section = document.getElementById(subSubSafeId);
+            if (!section) return;
+            
+            const grid = section.querySelector('.stock-grid');
+            const arrow = section.querySelector('.toggle-sub-arrow');
+            
+            if (!grid) return;
             
             if (grid.style.display === 'none' || grid.style.display === '') {{
                 grid.style.display = 'grid';
@@ -1564,8 +1667,10 @@ def run_pipeline():
         function toggleAll(expand) {{
             const subLists = document.querySelectorAll('.sub-category-list');
             const mainArrows = document.querySelectorAll('.toggle-main-arrow');
-            const grids = document.querySelectorAll('.stock-grid');
+            const midContents = document.querySelectorAll('.mid-content');
             const subArrows = document.querySelectorAll('.toggle-arrow');
+            const grids = document.querySelectorAll('.stock-grid');
+            const subSubArrows = document.querySelectorAll('.toggle-sub-arrow');
             
             subLists.forEach(list => {{
                 list.style.display = expand ? 'flex' : 'none';
@@ -1573,10 +1678,16 @@ def run_pipeline():
             mainArrows.forEach(arrow => {{
                 arrow.innerText = expand ? '▼' : '▶';
             }});
+            midContents.forEach(mc => {{
+                mc.style.display = expand ? 'flex' : 'none';
+            }});
+            subArrows.forEach(arrow => {{
+                arrow.innerText = expand ? '▼' : '▶';
+            }});
             grids.forEach(grid => {{
                 grid.style.display = expand ? 'grid' : 'none';
             }});
-            subArrows.forEach(arrow => {{
+            subSubArrows.forEach(arrow => {{
                 arrow.innerText = expand ? '▼' : '▶';
             }});
         }}
@@ -2234,11 +2345,11 @@ def run_pipeline():
                 }}
             }}
             
-            // Expand sub section if collapsed
-            const grid = section.querySelector('.stock-grid');
+            // Expand mid-content if collapsed
+            const midContent = section.querySelector('.mid-content');
             const arrow = section.querySelector('.toggle-arrow');
-            if (grid && (grid.style.display === 'none' || grid.style.display === '')) {{
-                grid.style.display = 'grid';
+            if (midContent && (midContent.style.display === 'none' || midContent.style.display === '')) {{
+                midContent.style.display = 'flex';
                 if (arrow) arrow.innerText = '▼';
             }}
             
