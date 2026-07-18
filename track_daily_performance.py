@@ -276,7 +276,7 @@ def run_pipeline():
         chunk = tickers[i:i+chunk_size]
         print(f"Downloading chunk {i // chunk_size + 1} / {len(tickers) // chunk_size + 1}...")
         try:
-            df = yf.download(chunk, period="20d", progress=False, group_by='column')
+            df = yf.download(chunk, period="30d", progress=False, group_by='column')
             
             closes_chunk = pd.DataFrame(index=df.index)
             volumes_chunk = pd.DataFrame(index=df.index)
@@ -434,6 +434,28 @@ def run_pipeline():
         
     df_all = pd.DataFrame(all_records)
     
+    # ── Volume and Money Flow Calculations ──
+    aligned_volumes = combined_volumes.loc[valid_df.index]
+    dollar_vol = valid_df * aligned_volumes
+    
+    ticker_to_mid = {t: stock_mapping[t]["mid_cat"] for t in valid_df.columns if t in stock_mapping}
+    common_cols = [c for c in valid_df.columns if c in ticker_to_mid]
+    
+    dollar_vol_filtered = dollar_vol[common_cols]
+    valid_df_filtered = valid_df[common_cols]
+    
+    # Sector total dollar volume over time (shape: Date, mid_cat)
+    sector_dollar_vol = dollar_vol_filtered.T.groupby(ticker_to_mid).sum().T
+    
+    # Sector daily returns (simple average of stock daily returns, shape: Date, mid_cat)
+    daily_returns = valid_df_filtered.pct_change() * 100
+    sector_returns = daily_returns.T.groupby(ticker_to_mid).mean().T
+    
+    # Sector volume shares over time
+    market_total_vol = sector_dollar_vol.sum(axis=1)
+    sector_vol_share = sector_dollar_vol.div(market_total_vol, axis=0) * 100
+    # ─────────────────────────────────────────
+    
     # 4. Multi-period statistics calculation (1D, 5D, 10D)
     periods = {
         "1d": dict_1d,
@@ -445,6 +467,33 @@ def run_pipeline():
     md_reports = {} # cache main sector averages for md generation
     
     for key, p_dict in periods.items():
+        # Compute volume share and volume expansion ratio (VER)
+        if key == "1d":
+            ver = sector_dollar_vol.iloc[-1] / sector_dollar_vol.iloc[-5:].mean()
+            share = sector_vol_share.iloc[-1]
+            tci = pd.Series(1.0, index=sector_dollar_vol.columns)
+            vol = pd.Series(0.0, index=sector_dollar_vol.columns)
+        elif key == "5d":
+            ver = sector_dollar_vol.iloc[-5:].mean() / sector_dollar_vol.mean()
+            share = sector_vol_share.iloc[-5:].mean()
+            tci = (sector_returns.iloc[-5:] > 0).sum() / 5
+            vol = sector_returns.iloc[-5:].std()
+        else: # 10d
+            ver = sector_dollar_vol.iloc[-10:].mean() / sector_dollar_vol.mean()
+            share = sector_vol_share.iloc[-10:].mean()
+            tci = (sector_returns.iloc[-10:] > 0).sum() / 10
+            vol = sector_returns.iloc[-10:].std()
+            
+        ver = ver.fillna(1.0).replace([np.inf, -np.inf], 1.0)
+        share = share.fillna(0.0)
+        tci = tci.fillna(1.0)
+        vol = vol.fillna(0.0)
+        
+        ver_dict = ver.to_dict()
+        share_dict = share.to_dict()
+        tci_dict = tci.to_dict()
+        vol_dict = vol.to_dict()
+
         records = []
         for ticker, change in p_dict.items():
             mapping = stock_mapping.get(ticker)
@@ -479,6 +528,32 @@ def run_pipeline():
             avg_change=('change', 'mean'),
             count=('change', 'count')
         ).reset_index()
+        
+        mid_perf['ver'] = mid_perf['mid_cat'].map(ver_dict).fillna(1.0)
+        mid_perf['share'] = mid_perf['mid_cat'].map(share_dict).fillna(0.0)
+        mid_perf['tci'] = mid_perf['mid_cat'].map(tci_dict).fillna(1.0)
+        mid_perf['vol'] = mid_perf['mid_cat'].map(vol_dict).fillna(0.0)
+        mid_perf['mfs'] = mid_perf['avg_change'] * mid_perf['ver']
+        
+        # Calculate Quiet Risers
+        if key != "1d":
+            min_change = 0.8 if key == "5d" else 1.5
+            max_change = 8.0 if key == "5d" else 15.0
+            min_tci = 0.6
+            max_vol = 2.5
+            
+            qr_df = mid_perf[
+                (mid_perf['avg_change'] >= min_change) &
+                (mid_perf['avg_change'] <= max_change) &
+                (mid_perf['tci'] >= min_tci) &
+                (mid_perf['vol'] <= max_vol) &
+                (mid_perf['ver'] >= 0.8)
+            ].copy()
+            qr_df['qrs'] = qr_df['avg_change'] * qr_df['tci'] * qr_df['ver']
+            qr_df = qr_df.sort_values(by='qrs', ascending=False)
+        else:
+            qr_df = pd.DataFrame()
+            
         mid_perf_filtered = mid_perf[mid_perf['count'] >= 2]
         mid_leaders = mid_perf_filtered.sort_values(by="avg_change", ascending=False).head(10)
         mid_laggards = mid_perf_filtered.sort_values(by="avg_change", ascending=True).head(10)
@@ -574,9 +649,22 @@ def run_pipeline():
         for _, row in mid_perf.iterrows():
             mName = row["main_cat"]
             mdName = row["mid_cat"]
+            
+            # 5-day volume share sparkline data
+            spark = []
+            if mdName in sector_vol_share.columns:
+                spark = [round(float(x), 2) for x in sector_vol_share[mdName].iloc[-5:].tolist()]
+                
+            is_quiet_riser = bool(mdName in qr_df['mid_cat'].values) if not qr_df.empty else False
+            
             mid_gp_map[f"{mName} - {mdName}"] = {
                 "avg": row["avg_change"],
-                "safe_id": get_safe_id(mName + "_" + mdName)
+                "safe_id": get_safe_id(mName + "_" + mdName),
+                "spark": spark,
+                "is_quiet_riser": is_quiet_riser,
+                "ver": float(row["ver"]),
+                "share": float(row["share"]),
+                "tci": float(row["tci"])
             }
 
         payload[key] = {
@@ -584,6 +672,40 @@ def run_pipeline():
             "main_gp": main_gp_map,
             "mid_gp": mid_gp_map,
             "sub_gp": sub_gp_map,
+            "capital_inflow": [
+                {
+                    "main_cat": r["main_cat"],
+                    "mid_cat": r["mid_cat"],
+                    "mfs": float(r["mfs"]),
+                    "avg_change": float(r["avg_change"]),
+                    "ver": float(r["ver"]),
+                    "share": float(r["share"]),
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
+                } for _, r in mid_perf[mid_perf['mfs'] > 0].sort_values(by='mfs', ascending=False).head(5).iterrows()
+            ],
+            "capital_outflow": [
+                {
+                    "main_cat": r["main_cat"],
+                    "mid_cat": r["mid_cat"],
+                    "mfs": float(r["mfs"]),
+                    "avg_change": float(r["avg_change"]),
+                    "ver": float(r["ver"]),
+                    "share": float(r["share"]),
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
+                } for _, r in mid_perf[mid_perf['mfs'] < 0].sort_values(by='mfs', ascending=True).head(5).iterrows()
+            ],
+            "quiet_risers": [
+                {
+                    "main_cat": r["main_cat"],
+                    "mid_cat": r["mid_cat"],
+                    "qrs": float(r["qrs"]) if "qrs" in r else 0.0,
+                    "avg_change": float(r["avg_change"]),
+                    "tci": float(r["tci"]),
+                    "vol": float(r["vol"]),
+                    "ver": float(r["ver"]),
+                    "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
+                } for _, r in qr_df.head(5).iterrows()
+            ] if key != "1d" else [],
             "mid_leaders": [
                 {
                     "main_cat": r["main_cat"],
@@ -697,10 +819,31 @@ def run_pipeline():
             mid_safe_id = get_safe_id(main_name + "_" + mid_name)
             mid_group_sorted = mid_group.sort_values(by="market_cap", ascending=False)
             
+            # Compute 5-day volume share sparkline SVG
+            spark_svg = ""
+            if mid_name in sector_vol_share.columns:
+                shares = sector_vol_share[mid_name].iloc[-5:].tolist()
+                max_share = max(shares) if max(shares) > 0 else 1.0
+                bar_width = 6
+                bar_gap = 2
+                height = 14
+                svg_width = 5 * bar_width + 4 * bar_gap
+                
+                svg_parts = [f'<svg class="vol-spark" width="{svg_width}" height="{height}" title="5日資金比重走勢" style="vertical-align: middle; margin-left: 8px;">']
+                for idx, val in enumerate(shares):
+                    h = (val / max_share) * height
+                    h = max(h, 2.0)
+                    y = height - h
+                    x = idx * (bar_width + bar_gap)
+                    op = round(0.35 + (idx / 4) * 0.65, 2)
+                    svg_parts.append(f'<rect x="{x}" y="{y}" width="{bar_width}" height="{h}" fill="var(--primary-accent)" opacity="{op}"></rect>')
+                svg_parts.append('</svg>')
+                spark_svg = "".join(svg_parts)
+            
             main_html.append(f"""
                 <div class="sub-section" id="{mid_safe_id}">
                     <div class="sub-header" onclick="toggleSubSection('{mid_safe_id}')" style="cursor: pointer; user-select: none;">
-                        <span class="sub-title"><span class="toggle-arrow">\u25b6</span> \U0001f4c1 {mid_name}</span>
+                        <span class="sub-title"><span class="toggle-arrow">\u25b6</span> \U0001f4c1 {mid_name}{spark_svg} <span class="quiet-riser-badge" id="qr-badge-{mid_safe_id}" style="display: none; margin-left: 6px; font-size: 0.75rem; background: rgba(16, 185, 129, 0.15); color: var(--taiwan-up); border: 1px solid rgba(16, 185, 129, 0.3); padding: 1px 6px; border-radius: 4px; font-weight: bold; font-family: \'Outfit\', sans-serif;">🐢 緩漲黑馬</span></span>
                         <div>
                             <span class="sub-count-badge">{len(mid_group_sorted)} \u6a94\u500b\u80a1</span>
                             <span class="sub-change-badge" id="badge-{mid_safe_id}">--</span>
@@ -1486,6 +1629,32 @@ def run_pipeline():
                 </div>
             </div>
             
+            <!-- Capital Flow & Quiet Risers Radar -->
+            <div class="side-card">
+                <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">🔥 資金流向與黑馬雷達</h2>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 10px;">(結合價量關係，即時追蹤資金流向與默默緩漲黑馬)</p>
+                
+                <!-- Toggle Flow tabs -->
+                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                    <button class="rank-tab-btn active" id="btn-flow-inflow" onclick="setFlowTab('inflow')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🔥 資金淨流入</button>
+                    <button class="rank-tab-btn" id="btn-flow-outflow" onclick="setFlowTab('outflow')" style="flex: 1; padding: 6px; font-size: 0.8rem;">⚠️ 資金淨流出</button>
+                    <button class="rank-tab-btn" id="btn-flow-risers" onclick="setFlowTab('risers')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🐢 默默緩漲</button>
+                </div>
+                
+                <table style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>族群名稱</th>
+                            <th id="flow-header-metric">比重 (量能比)</th>
+                            <th>幅度</th>
+                        </tr>
+                    </thead>
+                    <tbody id="flow-table-body">
+                        <!-- Dynamic -->
+                    </tbody>
+                </table>
+            </div>
+            
             <!-- Sub-sectors & Mid-clusters Averages Rankings -->
             <div class="side-card">
                 <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">📊 族群與產業強弱排行榜</h2>
@@ -2079,8 +2248,13 @@ def run_pipeline():
             currentPeriod = period;
             
             const buttons = document.querySelectorAll('.tab-btn');
-            buttons.forEach(btn => btn.classList.remove('active'));
-            event.currentTarget.classList.add('active');
+            buttons.forEach(btn => {{
+                if (btn.getAttribute('onclick') === `switchPeriod('${{period}}')`) {{
+                    btn.classList.add('active');
+                }} else {{
+                    btn.classList.remove('active');
+                }}
+            }});
             
             const pData = payload[period];
             
@@ -2131,6 +2305,11 @@ def run_pipeline():
                         badge.innerText = `${{sign}}${{mInfo.avg.toFixed(2)}}%`;
                         badge.style.color = mInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
                         if (mInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
+                    }}
+                    
+                    const qrBadge = document.getElementById("qr-badge-" + mInfo.safe_id);
+                    if (qrBadge) {{
+                        qrBadge.style.display = mInfo.is_quiet_riser ? 'inline-block' : 'none';
                     }}
                 }}
             }}
@@ -2256,6 +2435,7 @@ def run_pipeline():
             // 5. Update Rank Tables
             switchRank(currentRankTab);
             renderSubRankTable();
+            renderFlowTable();
         }}
         
         // Switch between Leaders and Laggards
@@ -2312,6 +2492,88 @@ def run_pipeline():
 
         function switchSubRank(tab) {{
             renderSubRankTable();
+        }}
+
+        let currentFlowTab = 'inflow';
+        
+        function setFlowTab(tab) {{
+            currentFlowTab = tab;
+            const btnInflow = document.getElementById('btn-flow-inflow');
+            const btnOutflow = document.getElementById('btn-flow-outflow');
+            const btnRisers = document.getElementById('btn-flow-risers');
+            if (btnInflow) btnInflow.classList.toggle('active', tab === 'inflow');
+            if (btnOutflow) btnOutflow.classList.toggle('active', tab === 'outflow');
+            if (btnRisers) btnRisers.classList.toggle('active', tab === 'risers');
+            
+            renderFlowTable();
+        }}
+        
+        function renderFlowTable() {{
+            const tbody = document.getElementById('flow-table-body');
+            const headerMetric = document.getElementById('flow-header-metric');
+            if (!tbody || !headerMetric) return;
+            tbody.innerHTML = '';
+            
+            const pData = payload[currentPeriod];
+            if (!pData) return;
+            
+            if (currentFlowTab === 'inflow') {{
+                headerMetric.innerText = '比重 (量能比)';
+                const list = pData.capital_inflow || [];
+                if (list.length === 0) {{
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">今日無放量流入族群</td></tr>';
+                    return;
+                }}
+                list.forEach(r => {{
+                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
+                    tbody.innerHTML += `
+                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
+                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
+                            <td>${{r.share.toFixed(1)}}% (${{r.ver.toFixed(1)}}x)</td>
+                            <td class="${{classColor}}">+${{r.avg_change.toFixed(2)}}%</td>
+                        </tr>
+                    `;
+                }});
+            }} else if (currentFlowTab === 'outflow') {{
+                headerMetric.innerText = '比重 (量能比)';
+                const list = pData.capital_outflow || [];
+                if (list.length === 0) {{
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">今日無放量流出族群</td></tr>';
+                    return;
+                }}
+                list.forEach(r => {{
+                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
+                    tbody.innerHTML += `
+                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
+                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
+                            <td>${{r.share.toFixed(1)}}% (${{r.ver.toFixed(1)}}x)</td>
+                            <td class="${{classColor}}">${{r.avg_change.toFixed(2)}}%</td>
+                        </tr>
+                    `;
+                }});
+            }} else if (currentFlowTab === 'risers') {{
+                headerMetric.innerText = '收紅天數 (量能比)';
+                if (currentPeriod === '1d') {{
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;font-size:0.8rem;">🐢 默默緩漲指標不支援 1D 頁籤<br/>請點擊上方切換為 5D 或 10D 查看</td></tr>';
+                    return;
+                }}
+                const list = pData.quiet_risers || [];
+                if (list.length === 0) {{
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">期間無符合緩漲特徵之族群</td></tr>';
+                    return;
+                }}
+                list.forEach(r => {{
+                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
+                    const pctDays = (r.tci * 100).toFixed(0);
+                    tbody.innerHTML += `
+                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
+                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
+                            <td>${{pctDays}}% (${{r.ver.toFixed(1)}}x)</td>
+                            <td class="${{classColor}}">+${{r.avg_change.toFixed(2)}}%</td>
+                        </tr>
+                    `;
+                }});
+            }}
         }}
 
         function renderSubRankTable() {{
