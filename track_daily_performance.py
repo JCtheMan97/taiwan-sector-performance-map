@@ -548,17 +548,31 @@ def run_pipeline():
         leaders = df_rec.sort_values(by="change", ascending=False).head(15)
         laggards = df_rec.sort_values(by="change", ascending=True).head(15)
         
-        # Calculate Main sector average
-        main_perf = df_rec.groupby("main_cat").agg(
-            avg_change=('change', 'mean'),
-            count=('change', 'count')
-        ).reset_index().sort_values(by="avg_change", ascending=False)
+        # Market-cap weighted average helper
+        def mcap_wavg(group):
+            mcaps = group['market_cap'].fillna(0).clip(lower=0)
+            total_mcap = mcaps.sum()
+            if total_mcap > 0:
+                return (group['change'] * mcaps).sum() / total_mcap
+            return group['change'].mean()
         
-        # Calculate Mid sector average (FILTER: count >= 2 to highlight mid clusters)
-        mid_perf = df_rec.groupby(["main_cat", "mid_cat"]).agg(
-            avg_change=('change', 'mean'),
-            count=('change', 'count')
+        # Calculate Main sector average (market-cap weighted)
+        main_perf = df_rec.groupby("main_cat").apply(
+            lambda g: pd.Series({
+                'avg_change': mcap_wavg(g),
+                'count': len(g)
+            })
+        ).reset_index().sort_values(by="avg_change", ascending=False)
+        main_perf['count'] = main_perf['count'].astype(int)
+        
+        # Calculate Mid sector average (market-cap weighted, FILTER: count >= 2)
+        mid_perf = df_rec.groupby(["main_cat", "mid_cat"]).apply(
+            lambda g: pd.Series({
+                'avg_change': mcap_wavg(g),
+                'count': len(g)
+            })
         ).reset_index()
+        mid_perf['count'] = mid_perf['count'].astype(int)
         
         mid_perf['ver'] = mid_perf['mid_cat'].map(ver_dict).fillna(1.0)
         mid_perf['share'] = mid_perf['mid_cat'].map(share_dict).fillna(0.0)
