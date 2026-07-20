@@ -270,6 +270,7 @@ def run_pipeline():
     all_closes = []
     all_volumes = []
     all_closes_today = []
+    all_volumes_today = []
     
     print(f"Downloading prices and volumes for {len(tickers)} tickers in chunks of {chunk_size}...")
     for i in range(0, len(tickers), chunk_size):
@@ -297,14 +298,18 @@ def run_pipeline():
             # Fetch the real-time quote for today to patch any incomplete/NaN close prices
             df_today = yf.download(chunk, period="1d", progress=False, group_by='column')
             closes_today_chunk = pd.DataFrame(index=df_today.index)
+            volumes_today_chunk = pd.DataFrame(index=df_today.index)
             for col in chunk:
                 if ('Adj Close', col) in df_today.columns:
                     closes_today_chunk[col] = df_today[('Adj Close', col)]
                 elif ('Close', col) in df_today.columns:
                     closes_today_chunk[col] = df_today[('Close', col)]
+                if ('Volume', col) in df_today.columns:
+                    volumes_today_chunk[col] = df_today[('Volume', col)]
             
             if not closes_today_chunk.empty:
                 all_closes_today.append(closes_today_chunk)
+                all_volumes_today.append(volumes_today_chunk)
         except Exception as e:
             print(f"Error downloading chunk: {e}")
             
@@ -315,17 +320,30 @@ def run_pipeline():
     combined_closes = pd.concat(all_closes, axis=1)
     combined_volumes = pd.concat(all_volumes, axis=1)
     
-    # Fill NaN values in the last row of combined_closes using 1d real-time quotes
+    # Merge today's 1d real-time quotes into combined_closes and combined_volumes
     if all_closes_today:
         combined_closes_today = pd.concat(all_closes_today, axis=1)
+        combined_volumes_today = pd.concat(all_volumes_today, axis=1) if all_volumes_today else pd.DataFrame()
+        
+        today_date = combined_closes_today.index[-1]
         last_date = combined_closes.index[-1]
-        for col in combined_closes.columns:
-            if pd.isna(combined_closes.loc[last_date, col]) and col in combined_closes_today.columns:
-                # only fill if the volume is not zero on the latest day
-                if col in combined_volumes.columns and combined_volumes.loc[last_date, col] > 0:
-                    val = combined_closes_today.loc[combined_closes_today.index[-1], col]
-                    if pd.notna(val):
-                        combined_closes.loc[last_date, col] = val
+        
+        if today_date.date() > last_date.date():
+            # Today's quote is newer than the historical download's last date!
+            # Append today's date as a new row in combined_closes and combined_volumes
+            print(f"Appending today's real-time quotes for date: {today_date.date()}...")
+            closes_row = combined_closes_today.iloc[-1]
+            volumes_row = combined_volumes_today.iloc[-1] if not combined_volumes_today.empty else pd.Series(1, index=closes_row.index)
+            combined_closes.loc[today_date] = closes_row
+            combined_volumes.loc[today_date] = volumes_row
+        else:
+            # Same date: fill NaN values in the last row
+            for col in combined_closes.columns:
+                if pd.isna(combined_closes.loc[last_date, col]) and col in combined_closes_today.columns:
+                    if col in combined_volumes.columns and combined_volumes.loc[last_date, col] > 0:
+                        val = combined_closes_today.loc[today_date, col]
+                        if pd.notna(val):
+                            combined_closes.loc[last_date, col] = val
     
     # Mask close prices where volume is 0 (prevents stale prices on holidays/closures)
     combined_closes = combined_closes.mask(combined_volumes == 0)

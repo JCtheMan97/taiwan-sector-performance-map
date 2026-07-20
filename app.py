@@ -72,12 +72,12 @@ data_date = get_data_date()
 today_tw = now_tw.date()
 
 # Function to run the tracker pipeline
-def run_update():
+def run_update(ignore_cooldown=False):
     if os.path.exists(lock_file):
         st.error("⚠️ 系統目前正由其他使用者更新中，請稍候再試。")
         return False
         
-    if time_since_update < min_interval_seconds:
+    if not ignore_cooldown and time_since_update < min_interval_seconds:
         st.warning(f"📊 數據在 10 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 Yahoo API 限制 IP。")
         return False
 
@@ -105,52 +105,54 @@ def run_update():
     return success
 
 # ── Auto-update decision logic ───────────────────────────────────────────────
-# The key fix: compare the ACTUAL DATA DATE (from the MD file) with today's
-# Taiwan date, NOT the file's mtime.  This prevents the case where the pipeline
-# ran but rolled back to yesterday, leaving the file stamp as "today" while the
-# data is still stale.
+# Compare ACTUAL DATA DATE (from the MD file) with today's Taiwan date.
 is_locked = os.path.exists(lock_file)
-is_too_frequent = time_since_update < min_interval_seconds
-
-auto_update_needed = False
 past_close = now_tw.hour >= 14  # After 14:00 Taiwan time (market closed)
 
+is_data_stale = False
 if data_date is None:
-    # No data at all → always update
-    auto_update_needed = True
+    is_data_stale = True
 elif data_date < today_tw:
-    # Data is from a previous date
     if now_tw.weekday() < 5 and past_close:
         # Weekday AND past 14:00 → today's close data should be available
-        auto_update_needed = True
+        is_data_stale = True
     elif (now_tw - last_update_dt).total_seconds() > 16 * 3600:
         # Or it's been more than 16 hours regardless
-        auto_update_needed = True
-# If data_date == today_tw → data is already fresh, no update needed
+        is_data_stale = True
 
-if auto_update_needed and not is_locked and not is_too_frequent:
-    st.info("🔄 偵測到有最新的台股收盤數據，系統正在自動更新看板中，請稍候約 1-2 分鐘...")
-    if run_update():
+# Cooldown limits:
+# - If data is ALREADY updated to today (data_date == today_tw): 10 minutes (600s) cooldown.
+# - If data is STALE (data_date < today_tw): 60 seconds retry lock (to prevent rapid looping on errors).
+cooldown_limit = min_interval_seconds if not is_data_stale else 60
+is_in_cooldown = time_since_update < cooldown_limit
+
+if is_data_stale and not is_locked and not is_in_cooldown:
+    st.info(f"🔄 偵測到有最新的台股收盤數據（目前資料日期：{data_date}），系統正在自動更新看板中，請稍候約 1-2 分鐘...")
+    if run_update(ignore_cooldown=True):
         st.rerun()
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
 
-st.sidebar.write(f"📅 **數據更新時間：**\n`{last_update}`")
+data_date_str = data_date.strftime('%Y-%m-%d') if data_date else "未知"
+st.sidebar.write(f"📊 **資料統計日期：** `{data_date_str}`")
+st.sidebar.write(f"📅 **檔案更新時間：** `{last_update}`")
 
 # Render update button on sidebar based on system status
-is_locked = os.path.exists(lock_file)
-is_too_frequent = time_since_update < min_interval_seconds
-
 if is_locked:
     st.sidebar.warning("⚠️ 其他使用者正在更新中...")
-    st.sidebar.button("🔄 立即更新數據", disabled=True, use_container_width=True, key="sb_btn_locked")
-elif is_too_frequent:
-    st.sidebar.info("📊 數據已是最新（10分鐘內）")
+    st.sidebar.button("🔄 讀取中...", disabled=True, use_container_width=True, key="sb_btn_locked")
+elif is_in_cooldown and not is_data_stale:
+    st.sidebar.info("✅ 數據已是今日最新 (10分鐘內)")
     st.sidebar.button("🔄 10分鐘內已更新過", disabled=True, use_container_width=True, key="sb_btn_frequent")
+elif is_in_cooldown and is_data_stale:
+    st.sidebar.warning("⏳ 剛嘗試更新過，請稍候 1 分鐘...")
+    st.sidebar.button("🔄 1分鐘內已嘗試過", disabled=True, use_container_width=True, key="sb_btn_stale_retry")
 else:
-    if st.sidebar.button("🔄 立即更新數據", use_container_width=True, key="sb_btn_active"):
-        if run_update():
+    btn_label = "🚀 立即更新為今日數據" if is_data_stale else "🔄 刷新數據"
+    btn_type = "primary" if is_data_stale else "secondary"
+    if st.sidebar.button(btn_label, type=btn_type, use_container_width=True, key="sb_btn_active"):
+        if run_update(ignore_cooldown=is_data_stale):
             st.rerun()
 
 # Expandable sidebar for markdown report
