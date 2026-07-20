@@ -578,7 +578,8 @@ def run_pipeline():
                 (mid_perf['avg_change'] <= max_change) &
                 (mid_perf['tci'] >= min_tci) &
                 (mid_perf['vol'] <= max_vol) &
-                (mid_perf['ver'] >= 0.8)
+                (mid_perf['ver'] >= 0.8) &
+                (mid_perf['count'] >= 3)
             ].copy()
             qr_df['qrs'] = qr_df['avg_change'] * qr_df['tci'] * qr_df['ver']
             qr_df = qr_df.sort_values(by='qrs', ascending=False)
@@ -712,7 +713,7 @@ def run_pipeline():
                     "ver": float(r["ver"]),
                     "share": float(r["share"]),
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
-                } for _, r in mid_perf[mid_perf['mfs'] > 0].sort_values(by='mfs', ascending=False).head(5).iterrows()
+                } for _, r in mid_perf[(mid_perf['mfs'] > 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=False).head(5).iterrows()
             ],
             "capital_outflow": [
                 {
@@ -723,7 +724,7 @@ def run_pipeline():
                     "ver": float(r["ver"]),
                     "share": float(r["share"]),
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
-                } for _, r in mid_perf[mid_perf['mfs'] < 0].sort_values(by='mfs', ascending=True).head(5).iterrows()
+                } for _, r in mid_perf[(mid_perf['mfs'] < 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=True).head(5).iterrows()
             ],
             "quiet_risers": [
                 {
