@@ -1,3 +1,4 @@
+import time
 # -*- coding: utf-8 -*-
 """
 track_daily_performance.py
@@ -266,7 +267,7 @@ def run_pipeline():
         
     # 3. Batch download prices and volumes (period=20d to cover 10 trading days)
     tickers = list(stock_mapping.keys())
-    chunk_size = 1000
+    chunk_size = 500
     all_closes = []
     all_volumes = []
     all_closes_today = []
@@ -275,31 +276,38 @@ def run_pipeline():
     print(f"Downloading prices and volumes for {len(tickers)} tickers in chunks of {chunk_size}...")
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
-        print(f"Downloading chunk {i // chunk_size + 1} / {len(tickers) // chunk_size + 1}...")
+        print(f"Downloading chunk {i // chunk_size + 1} / {(len(tickers) + chunk_size - 1) // chunk_size}...")
         try:
             df = yf.download(chunk, period="45d", progress=False, group_by='column')
+            time.sleep(2.0) # Prevent Yahoo Rate Limit
+            df_today = yf.download(chunk, period="1d", progress=False, group_by='column')
+            time.sleep(2.0)
             
             if df.empty:
                 print(f"Warning: Empty data in chunk {i // chunk_size + 1}")
                 continue
 
-            # Efficient vectorized column extraction (prevents DataFrame fragmentation)
+            # Efficient vectorized column extraction for 45d historical
             if isinstance(df.columns, pd.MultiIndex):
-                if 'Adj Close' in df.columns.levels[0]:
-                    closes_chunk = df['Adj Close']
-                elif 'Close' in df.columns.levels[0]:
-                    closes_chunk = df['Close']
-                else:
-                    closes_chunk = pd.DataFrame(index=df.index)
-
-                if 'Volume' in df.columns.levels[0]:
-                    volumes_chunk = df['Volume']
-                else:
-                    volumes_chunk = pd.DataFrame(index=df.index)
+                closes_chunk = df['Close'] if 'Close' in df.columns.levels[0] else (df['Adj Close'] if 'Adj Close' in df.columns.levels[0] else pd.DataFrame())
+                volumes_chunk = df['Volume'] if 'Volume' in df.columns.levels[0] else pd.DataFrame()
             else:
                 closes_chunk = df[['Close']] if 'Close' in df.columns else pd.DataFrame()
                 volumes_chunk = df[['Volume']] if 'Volume' in df.columns else pd.DataFrame()
-            
+
+            # Efficient vectorized column extraction for 1d real-time
+            if not df_today.empty:
+                if isinstance(df_today.columns, pd.MultiIndex):
+                    closes_today_chunk = df_today['Close'] if 'Close' in df_today.columns.levels[0] else (df_today['Adj Close'] if 'Adj Close' in df_today.columns.levels[0] else pd.DataFrame())
+                    volumes_today_chunk = df_today['Volume'] if 'Volume' in df_today.columns.levels[0] else pd.DataFrame()
+                else:
+                    closes_today_chunk = df_today[['Close']] if 'Close' in df_today.columns else pd.DataFrame()
+                    volumes_today_chunk = df_today[['Volume']] if 'Volume' in df_today.columns else pd.DataFrame()
+                
+                if not closes_today_chunk.empty:
+                    all_closes_today.append(closes_today_chunk)
+                    all_volumes_today.append(volumes_today_chunk)
+
             if not closes_chunk.empty and not volumes_chunk.empty:
                 all_closes.append(closes_chunk)
                 all_volumes.append(volumes_chunk)
@@ -313,7 +321,25 @@ def run_pipeline():
     combined_closes = pd.concat(all_closes, axis=1)
     combined_volumes = pd.concat(all_volumes, axis=1)
     
-# Optimized: period='45d' download already includes the latest day's quote.
+    # Merge today's 1d real-time quotes into combined_closes and combined_volumes
+    if all_closes_today:
+        combined_closes_today = pd.concat(all_closes_today, axis=1)
+        combined_volumes_today = pd.concat(all_volumes_today, axis=1) if all_volumes_today else pd.DataFrame()
+        
+        today_date = combined_closes_today.index[-1]
+        last_date = combined_closes.index[-1]
+        
+        if today_date.date() > last_date.date():
+            # Today's quote is newer than historical download's last date -> Append today's row!
+            closes_row = combined_closes_today.iloc[-1]
+            volumes_row = combined_volumes_today.iloc[-1] if not combined_volumes_today.empty else pd.Series(1, index=closes_row.index)
+            combined_closes.loc[today_date] = closes_row
+            combined_volumes.loc[today_date] = volumes_row
+        else:
+            # Same date -> Fill NaNs in the last row vectorised for both closes and volumes
+            combined_closes.loc[last_date] = combined_closes.loc[last_date].combine_first(combined_closes_today.loc[today_date])
+            if not combined_volumes_today.empty:
+                combined_volumes.loc[last_date] = combined_volumes.loc[last_date].combine_first(combined_volumes_today.loc[today_date])
     
     # Mask close prices where volume is 0 (prevents stale prices on holidays/closures)
     combined_closes = combined_closes.mask(combined_volumes == 0)
