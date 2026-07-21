@@ -318,16 +318,15 @@ def run_pipeline():
     # Mask close prices where volume is 0 (prevents stale prices on holidays/closures)
     combined_closes = combined_closes.mask(combined_volumes == 0)
     
-    # Extract valid trading rows
+    # Extract valid trading rows (drop trailing rows where all values are NaN)
     valid_df = combined_closes.dropna(how='all')
     
-    # Auto-rollback if today's yfinance closing prices are not yet fully updated (mostly NaN)
+    # Cleanly drop trailing dates that have incomplete/empty price data
     while len(valid_df) >= 2:
         last_row = valid_df.iloc[-1]
         non_nan_count = last_row.notna().sum()
         total_count = len(last_row)
         if non_nan_count < (total_count * 0.5):
-            print(f"Warning: Latest day ({valid_df.index[-1].date()}) has incomplete price data ({non_nan_count}/{total_count} tickers). Rolling back to previous trading day...")
             valid_df = valid_df.iloc[:-1]
         else:
             break
