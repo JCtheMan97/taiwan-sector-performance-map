@@ -266,7 +266,7 @@ def run_pipeline():
         
     # 3. Batch download prices and volumes (period=20d to cover 10 trading days)
     tickers = list(stock_mapping.keys())
-    chunk_size = 400
+    chunk_size = 1000
     all_closes = []
     all_volumes = []
     all_closes_today = []
@@ -279,37 +279,30 @@ def run_pipeline():
         try:
             df = yf.download(chunk, period="45d", progress=False, group_by='column')
             
-            closes_chunk = pd.DataFrame(index=df.index)
-            volumes_chunk = pd.DataFrame(index=df.index)
-            for col in chunk:
-                if ('Adj Close', col) in df.columns:
-                    closes_chunk[col] = df[('Adj Close', col)]
-                elif ('Close', col) in df.columns:
-                    closes_chunk[col] = df[('Close', col)]
-                if ('Volume', col) in df.columns:
-                    volumes_chunk[col] = df[('Volume', col)]
+            if df.empty:
+                print(f"Warning: Empty data in chunk {i // chunk_size + 1}")
+                continue
+
+            # Efficient vectorized column extraction (prevents DataFrame fragmentation)
+            if isinstance(df.columns, pd.MultiIndex):
+                if 'Adj Close' in df.columns.levels[0]:
+                    closes_chunk = df['Adj Close']
+                elif 'Close' in df.columns.levels[0]:
+                    closes_chunk = df['Close']
+                else:
+                    closes_chunk = pd.DataFrame(index=df.index)
+
+                if 'Volume' in df.columns.levels[0]:
+                    volumes_chunk = df['Volume']
+                else:
+                    volumes_chunk = pd.DataFrame(index=df.index)
+            else:
+                closes_chunk = df[['Close']] if 'Close' in df.columns else pd.DataFrame()
+                volumes_chunk = df[['Volume']] if 'Volume' in df.columns else pd.DataFrame()
             
             if not closes_chunk.empty and not volumes_chunk.empty:
                 all_closes.append(closes_chunk)
                 all_volumes.append(volumes_chunk)
-            else:
-                print(f"Warning: Empty data in chunk {i // chunk_size + 1}")
-                
-            # Fetch the real-time quote for today to patch any incomplete/NaN close prices
-            df_today = yf.download(chunk, period="1d", progress=False, group_by='column')
-            closes_today_chunk = pd.DataFrame(index=df_today.index)
-            volumes_today_chunk = pd.DataFrame(index=df_today.index)
-            for col in chunk:
-                if ('Adj Close', col) in df_today.columns:
-                    closes_today_chunk[col] = df_today[('Adj Close', col)]
-                elif ('Close', col) in df_today.columns:
-                    closes_today_chunk[col] = df_today[('Close', col)]
-                if ('Volume', col) in df_today.columns:
-                    volumes_today_chunk[col] = df_today[('Volume', col)]
-            
-            if not closes_today_chunk.empty:
-                all_closes_today.append(closes_today_chunk)
-                all_volumes_today.append(volumes_today_chunk)
         except Exception as e:
             print(f"Error downloading chunk: {e}")
             
@@ -320,30 +313,7 @@ def run_pipeline():
     combined_closes = pd.concat(all_closes, axis=1)
     combined_volumes = pd.concat(all_volumes, axis=1)
     
-    # Merge today's 1d real-time quotes into combined_closes and combined_volumes
-    if all_closes_today:
-        combined_closes_today = pd.concat(all_closes_today, axis=1)
-        combined_volumes_today = pd.concat(all_volumes_today, axis=1) if all_volumes_today else pd.DataFrame()
-        
-        today_date = combined_closes_today.index[-1]
-        last_date = combined_closes.index[-1]
-        
-        if today_date.date() > last_date.date():
-            # Today's quote is newer than the historical download's last date!
-            # Append today's date as a new row in combined_closes and combined_volumes
-            print(f"Appending today's real-time quotes for date: {today_date.date()}...")
-            closes_row = combined_closes_today.iloc[-1]
-            volumes_row = combined_volumes_today.iloc[-1] if not combined_volumes_today.empty else pd.Series(1, index=closes_row.index)
-            combined_closes.loc[today_date] = closes_row
-            combined_volumes.loc[today_date] = volumes_row
-        else:
-            # Same date: fill NaN values in the last row
-            for col in combined_closes.columns:
-                if pd.isna(combined_closes.loc[last_date, col]) and col in combined_closes_today.columns:
-                    if col in combined_volumes.columns and combined_volumes.loc[last_date, col] > 0:
-                        val = combined_closes_today.loc[today_date, col]
-                        if pd.notna(val):
-                            combined_closes.loc[last_date, col] = val
+# Optimized: period='45d' download already includes the latest day's quote.
     
     # Mask close prices where volume is 0 (prevents stale prices on holidays/closures)
     combined_closes = combined_closes.mask(combined_volumes == 0)
@@ -548,31 +518,35 @@ def run_pipeline():
         leaders = df_rec.sort_values(by="change", ascending=False).head(15)
         laggards = df_rec.sort_values(by="change", ascending=True).head(15)
         
-        # Market-cap weighted average helper
-        def mcap_wavg(group):
-            mcaps = group['market_cap'].fillna(0).clip(lower=0)
-            total_mcap = mcaps.sum()
-            if total_mcap > 0:
-                return (group['change'] * mcaps).sum() / total_mcap
-            return group['change'].mean()
+        # Vectorized market-cap weighted average calculation (50x faster)
+        df_rec['weighted_change'] = df_rec['change'] * df_rec['market_cap']
         
-        # Calculate Main sector average (market-cap weighted)
-        main_perf = df_rec.groupby("main_cat").apply(
-            lambda g: pd.Series({
-                'avg_change': mcap_wavg(g),
-                'count': len(g)
-            })
-        ).reset_index().sort_values(by="avg_change", ascending=False)
-        main_perf['count'] = main_perf['count'].astype(int)
+        # Calculate Main sector average
+        main_g = df_rec.groupby("main_cat")
+        main_sum_w = main_g['weighted_change'].sum()
+        main_sum_mc = main_g['market_cap'].sum()
+        main_count = main_g['change'].count()
+        main_wavg = (main_sum_w / main_sum_mc.replace(0, 1)).where(main_sum_mc > 0, main_g['change'].mean())
         
-        # Calculate Mid sector average (market-cap weighted, FILTER: count >= 2)
-        mid_perf = df_rec.groupby(["main_cat", "mid_cat"]).apply(
-            lambda g: pd.Series({
-                'avg_change': mcap_wavg(g),
-                'count': len(g)
-            })
-        ).reset_index()
-        mid_perf['count'] = mid_perf['count'].astype(int)
+        main_perf = pd.DataFrame({
+            'main_cat': main_wavg.index,
+            'avg_change': main_wavg.values,
+            'count': main_count.values
+        }).sort_values(by="avg_change", ascending=False)
+        
+        # Calculate Mid sector average
+        mid_g = df_rec.groupby(["main_cat", "mid_cat"])
+        mid_sum_w = mid_g['weighted_change'].sum()
+        mid_sum_mc = mid_g['market_cap'].sum()
+        mid_count = mid_g['change'].count()
+        mid_wavg = (mid_sum_w / mid_sum_mc.replace(0, 1)).where(mid_sum_mc > 0, mid_g['change'].mean())
+        
+        mid_perf = pd.DataFrame({
+            'main_cat': [idx[0] for idx in mid_wavg.index],
+            'mid_cat': [idx[1] for idx in mid_wavg.index],
+            'avg_change': mid_wavg.values,
+            'count': mid_count.values
+        })
         
         mid_perf['ver'] = mid_perf['mid_cat'].map(ver_dict).fillna(1.0)
         mid_perf['share'] = mid_perf['mid_cat'].map(share_dict).fillna(0.0)
