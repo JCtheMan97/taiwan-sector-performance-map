@@ -726,7 +726,7 @@ def run_pipeline():
                     "ver": float(r["ver"]),
                     "share": float(r["share"]),
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
-                } for _, r in mid_perf[(mid_perf['mfs'] > 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=False).head(5).iterrows()
+                } for _, r in mid_perf[(mid_perf['mfs'] > 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=False).head(10).iterrows()
             ],
             "capital_outflow": [
                 {
@@ -737,7 +737,7 @@ def run_pipeline():
                     "ver": float(r["ver"]),
                     "share": float(r["share"]),
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
-                } for _, r in mid_perf[(mid_perf['mfs'] < 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=True).head(5).iterrows()
+                } for _, r in mid_perf[(mid_perf['mfs'] < 0) & (mid_perf['count'] >= 3)].sort_values(by='mfs', ascending=True).head(10).iterrows()
             ],
             "quiet_risers": [
                 {
@@ -749,7 +749,7 @@ def run_pipeline():
                     "vol": float(r["vol"]),
                     "ver": float(r["ver"]),
                     "safe_id": get_safe_id(r["main_cat"] + "_" + r["mid_cat"])
-                } for _, r in qr_df.head(5).iterrows()
+                } for _, r in qr_df.head(10).iterrows()
             ] if key != "1d" else [],
             "mid_leaders": [
                 {
@@ -1689,18 +1689,20 @@ def run_pipeline():
                     <button class="rank-tab-btn" id="btn-flow-risers" onclick="setFlowTab('risers')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🐢 默默緩漲</button>
                 </div>
                 
-                <table style="width: 100%;">
-                    <thead>
-                        <tr>
-                            <th>族群名稱</th>
-                            <th id="flow-header-metric">比重 (量能比)</th>
-                            <th>幅度</th>
-                        </tr>
-                    </thead>
-                    <tbody id="flow-table-body">
-                        <!-- Dynamic -->
-                    </tbody>
-                </table>
+                <div style="max-height: 400px; overflow-y: auto; border-radius: 6px;">
+                    <table style="width: 100%;">
+                        <thead style="position: sticky; top: 0; background: #161c2d; z-index: 5;">
+                            <tr>
+                                <th>族群名稱</th>
+                                <th id="flow-header-metric">比重 (量能比)</th>
+                                <th>幅度</th>
+                            </tr>
+                        </thead>
+                        <tbody id="flow-table-body">
+                            <!-- Dynamic -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
             
             <!-- Sub-sectors & Mid-clusters Averages Rankings -->
