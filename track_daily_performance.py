@@ -1693,8 +1693,8 @@ def run_pipeline():
                     <table style="width: 100%;">
                         <thead style="position: sticky; top: 0; background: #161c2d; z-index: 5;">
                             <tr>
-                                <th>族群名稱</th>
-                                <th id="flow-header-metric">比重 (量能比)</th>
+                                <th style="width: 42%;">族群名稱</th>
+                                <th id="flow-header-metric" style="white-space: nowrap;">比重 (量能比)</th>
                                 <th>幅度</th>
                             </tr>
                         </thead>
