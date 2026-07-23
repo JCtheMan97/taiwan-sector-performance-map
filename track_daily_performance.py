@@ -794,7 +794,9 @@ def run_pipeline():
                 "total": len(df_rec),
                 "up": int((df_rec['change'] > 0).sum()),
                 "down": int((df_rec['change'] < 0).sum()),
-                "flat": int((df_rec['change'] == 0).sum())
+                "flat": int((df_rec['change'] == 0).sum()),
+                "limit_up": int((df_rec['change'] >= 9.85).sum()),
+                "limit_down": int((df_rec['change'] <= -9.85).sum())
             }
         }
         
