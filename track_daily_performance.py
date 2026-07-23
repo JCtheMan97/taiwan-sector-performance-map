@@ -1,3 +1,4 @@
+from fetch_institutional_data import get_institutional_data
 import time
 # -*- coding: utf-8 -*-
 """
@@ -1674,6 +1675,14 @@ def run_pipeline():
                         <h4>⚪ 平盤家數</h4>
                         <div id="stat-flat" class="b-val" style="color: var(--flat-color);">0</div>
                     </div>
+                    <div class="b-card">
+                        <h4>🔥 漲停家數</h4>
+                        <div id="stat-limit-up" class="b-val" style="color: #ef4444; font-weight: bold;">0</div>
+                    </div>
+                    <div class="b-card">
+                        <h4>❄️ 跌停家數</h4>
+                        <div id="stat-limit-down" class="b-val" style="color: #10b981; font-weight: bold;">0</div>
+                    </div>
                 </div>
             </div>
             
@@ -2326,6 +2335,12 @@ def run_pipeline():
             document.getElementById('stat-up').innerText = pData.stats.up;
             document.getElementById('stat-down').innerText = pData.stats.down;
             document.getElementById('stat-flat').innerText = pData.stats.flat;
+            if (document.getElementById('stat-limit-up')) {{
+                document.getElementById('stat-limit-up').innerText = pData.stats.limit_up || 0;
+            }}
+            if (document.getElementById('stat-limit-down')) {{
+                document.getElementById('stat-limit-down').innerText = pData.stats.limit_down || 0;
+            }}
             
             // 2. Loop and Update stock pills
             const pills = document.querySelectorAll('.stock-pill');
