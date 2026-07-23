@@ -71,6 +71,39 @@ def get_safe_id(name):
     """Generates a safe HTML ID string using MD5 to bypass encoding conflicts."""
     return "id_" + hashlib.md5(name.encode('utf-8')).hexdigest()
 
+def get_tick_size(price):
+    """Returns official Taiwan TWSE/TPEX tick size for a given price level."""
+    if price < 10.0:
+        return 0.01
+    elif price < 50.0:
+        return 0.05
+    elif price < 100.0:
+        return 0.10
+    elif price < 500.0:
+        return 0.50
+    elif price < 1000.0:
+        return 1.00
+    else:
+        return 5.00
+
+def calc_tw_limit_up(p0):
+    """Calculates exact TWSE/TPEX Limit Up Price from previous close p0."""
+    if pd.isna(p0) or p0 <= 0:
+        return 999999.0
+    raw = p0 * 1.10
+    tick = get_tick_size(raw)
+    limit_up = np.floor(round(raw, 4) / tick + 1e-6) * tick
+    return round(limit_up, 2)
+
+def calc_tw_limit_down(p0):
+    """Calculates exact TWSE/TPEX Limit Down Price from previous close p0."""
+    if pd.isna(p0) or p0 <= 0:
+        return 0.0
+    raw = p0 * 0.90
+    tick = get_tick_size(raw)
+    limit_down = np.ceil(round(raw, 4) / tick - 1e-6) * tick
+    return round(limit_down, 2)
+
 def get_categories(name, data, ticker):
     """Categorizes stock using cache details."""
     ticker_num = ticker.split(".")[0].strip()
@@ -234,6 +267,12 @@ def get_categories(name, data, ticker):
     return clean_category(main_cat, sub_cat)
 
 def run_pipeline():
+    global inst_data
+    try:
+        inst_data = get_institutional_data()
+    except Exception as e:
+        print(f"⚠️ Institutional fetch skipped: {e}")
+        inst_data = {}
     print("=" * 60)
     print("🚀 Starting Daily Sector Performance Tracker & Dashboard")
     print("=" * 60)
@@ -431,6 +470,9 @@ def run_pipeline():
     dict_10d = change_10d.to_dict()
     dict_20d = change_20d.to_dict()
     
+    p_yesterday = valid_df.iloc[-2] if len(valid_df) >= 2 else pd.Series()
+    p_today = valid_df.iloc[-1] if len(valid_df) >= 1 else pd.Series()
+
     # Create unified master records
     all_records = []
     for ticker, mapping in stock_mapping.items():
@@ -439,6 +481,19 @@ def run_pipeline():
         val_10d = dict_10d.get(ticker, None)
         val_20d = dict_20d.get(ticker, None)
         
+        p0 = p_yesterday.get(ticker, None)
+        p1 = p_today.get(ticker, None)
+        is_limit_up = False
+        is_limit_down = False
+        if pd.notna(p0) and pd.notna(p1) and p0 > 0:
+            l_up = calc_tw_limit_up(p0)
+            l_dn = calc_tw_limit_down(p0)
+            is_limit_up = bool(p1 >= l_up - 1e-4)
+            is_limit_down = bool(p1 <= l_dn + 1e-4)
+        elif val_1d is not None and pd.notna(val_1d):
+            is_limit_up = bool(val_1d >= 9.85)
+            is_limit_down = bool(val_1d <= -9.85)
+            
         mid_cat = mapping.get("mid_cat") or get_mid_category(mapping["name"], mapping["main_cat"], mapping["sub_cat"])
         all_records.append({
             "ticker": ticker,
@@ -450,7 +505,9 @@ def run_pipeline():
             "change_1d": val_1d,
             "change_5d": val_5d,
             "change_10d": val_10d,
-            "change_20d": val_20d
+            "change_20d": val_20d,
+            "is_limit_up": is_limit_up,
+            "is_limit_down": is_limit_down
         })
         
     df_all = pd.DataFrame(all_records)
@@ -795,8 +852,8 @@ def run_pipeline():
                 "up": int((df_rec['change'] > 0).sum()),
                 "down": int((df_rec['change'] < 0).sum()),
                 "flat": int((df_rec['change'] == 0).sum()),
-                "limit_up": int((df_rec['change'] >= 9.85).sum()),
-                "limit_down": int((df_rec['change'] <= -9.85).sum())
+                "limit_up": int(df_all['is_limit_up'].sum()) if (key == "1d" and 'is_limit_up' in df_all) else int((df_rec['change'] >= 9.85).sum()),
+                "limit_down": int(df_all['is_limit_down'].sum()) if (key == "1d" and 'is_limit_down' in df_all) else int((df_rec['change'] <= -9.85).sum())
             }
         }
         
@@ -921,10 +978,27 @@ def run_pipeline():
                     c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
                     c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
                     c_20d = f"{row['change_20d']:.2f}" if pd.notna(row['change_20d']) else "null"
-                    title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%\\n20D: {c_20d}%"
+                    
+                    pure_ticker = str(row['ticker']).split('.')[0]
+                    i_info = inst_data.get(pure_ticker, {})
+                    inst_foreign = i_info.get("foreign", 0)
+                    inst_trust = i_info.get("trust", 0)
+                    inst_dealer = i_info.get("dealer", 0)
+                    
+                    f_str = f"+{inst_foreign}" if inst_foreign > 0 else str(inst_foreign)
+                    t_str = f"+{inst_trust}" if inst_trust > 0 else str(inst_trust)
+                    d_str = f"+{inst_dealer}" if inst_dealer > 0 else str(inst_dealer)
+                    inst_str = f"\n--- 🏛️ 三大法人買賣超 (張) ---\n外資: {f_str} 張\n投信: {t_str} 張\n自營: {d_str} 張"
+                    title_tooltip = f"股名: {row['name']}\n代號: {row['ticker']}\n中型族群: {mid_name}\n細分次產業: {row['sub_cat']}\n1D: {c_1d}%\n5D: {c_5d}%\n10D: {c_10d}%\n20D: {c_20d}%" + inst_str
+                    
+                    limit_cls = ""
+                    if row.get('is_limit_up', False):
+                        limit_cls = " limit-up"
+                    elif row.get('is_limit_down', False):
+                        limit_cls = " limit-down"
                     
                     main_html.append(f"""
-                            <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" title="{title_tooltip}">
+                            <div class="stock-pill{limit_cls}" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" data-foreign="{inst_foreign}" data-trust="{inst_trust}" data-dealer="{inst_dealer}" title="{title_tooltip}">
                                  <span class="s-name">{row['name']}</span>
                                  <span class="s-change" id="change-text-{ticker_clean}">--</span>
                             </div>
@@ -932,7 +1006,7 @@ def run_pipeline():
                 
                 main_html.append("</div>")
             else:
-                # Multiple sub_cats: show sub-category headers (\u5c0f level)
+                # Multiple sub_cats: show sub-category headers
                 for sub_name in sub_cats_in_mid:
                     sub_group = grouped_sub.get_group(sub_name).sort_values(by="market_cap", ascending=False)
                     sub_safe_id = get_safe_id(main_name + "_" + mid_name + "_" + sub_name)
@@ -940,9 +1014,9 @@ def run_pipeline():
                     main_html.append(f"""
                         <div class="sub-sub-section" id="{sub_safe_id}">
                             <div class="sub-sub-header" onclick="toggleSubSubSection('{sub_safe_id}')" style="cursor: pointer; user-select: none;">
-                                <span class="sub-sub-title"><span class="toggle-sub-arrow">\u25b6</span> \U0001f3f7\ufe0f {sub_name}</span>
+                                <span class="sub-sub-title"><span class="toggle-sub-arrow">▶</span> 🏷️ {sub_name}</span>
                                 <div>
-                                    <span class="sub-count-badge" style="font-size: 0.7rem;">{len(sub_group)} \u6a94</span>
+                                    <span class="sub-count-badge" style="font-size: 0.7rem;">{len(sub_group)} 檔</span>
                                     <span class="sub-sub-change-badge" id="badge-{sub_safe_id}">--</span>
                                 </div>
                             </div>
@@ -956,10 +1030,27 @@ def run_pipeline():
                         c_5d = f"{row['change_5d']:.2f}" if pd.notna(row['change_5d']) else "null"
                         c_10d = f"{row['change_10d']:.2f}" if pd.notna(row['change_10d']) else "null"
                         c_20d = f"{row['change_20d']:.2f}" if pd.notna(row['change_20d']) else "null"
-                        title_tooltip = f"\u80a1\u540d: {row['name']}\\n\u4ee3\u865f: {row['ticker']}\\n\u4e2d\u578b\u65cf\u7fa4: {mid_name}\\n\u7d30\u5206\u6b21\u7522\u696d: {row['sub_cat']}\\n1D: {c_1d}%\\n5D: {c_5d}%\\n10D: {c_10d}%\\n20D: {c_20d}%"
+                        
+                        pure_ticker = str(row['ticker']).split('.')[0]
+                        i_info = inst_data.get(pure_ticker, {})
+                        inst_foreign = i_info.get("foreign", 0)
+                        inst_trust = i_info.get("trust", 0)
+                        inst_dealer = i_info.get("dealer", 0)
+                        
+                        f_str = f"+{inst_foreign}" if inst_foreign > 0 else str(inst_foreign)
+                        t_str = f"+{inst_trust}" if inst_trust > 0 else str(inst_trust)
+                        d_str = f"+{inst_dealer}" if inst_dealer > 0 else str(inst_dealer)
+                        inst_str = f"\n--- 🏛️ 三大法人買賣超 (張) ---\n外資: {f_str} 張\n投信: {t_str} 張\n自營: {d_str} 張"
+                        title_tooltip = f"股名: {row['name']}\n代號: {row['ticker']}\n中型族群: {mid_name}\n細分次產業: {row['sub_cat']}\n1D: {c_1d}%\n5D: {c_5d}%\n10D: {c_10d}%\n20D: {c_20d}%" + inst_str
+                        
+                        limit_cls = ""
+                        if row.get('is_limit_up', False):
+                            limit_cls = " limit-up"
+                        elif row.get('is_limit_down', False):
+                            limit_cls = " limit-down"
                         
                         main_html.append(f"""
-                                <div class="stock-pill" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" title="{title_tooltip}">
+                                <div class="stock-pill{limit_cls}" id="stock-{ticker_clean}" data-ticker="{ticker_short}" data-name="{row['name']}" data-main-cat="{main_name}" data-mid-cat="{mid_name}" data-sub-cat="{row['sub_cat']}" data-1d="{c_1d}" data-5d="{c_5d}" data-10d="{c_10d}" data-20d="{c_20d}" data-foreign="{inst_foreign}" data-trust="{inst_trust}" data-dealer="{inst_dealer}" title="{title_tooltip}">
                                      <span class="s-name">{row['name']}</span>
                                      <span class="s-change" id="change-text-{ticker_clean}">--</span>
                                 </div>
@@ -980,1785 +1071,36 @@ def run_pipeline():
         </div>
         """)
         grid_html.append("".join(main_html))
-    all_grid_elements_html = "\n".join(grid_html)
-    
-    # 7. Write HTML Page
-    html_content = f"""<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>👑 台股產業資金流向熱力圖</title>
-    <!-- Google Fonts Outfit & Inter -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
-    <!-- ECharts CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-    <style>
-        :root {{
-            --bg-color: #0b0f19;
-            --card-bg: rgba(22, 28, 45, 0.7);
-            --border-color: rgba(255, 255, 255, 0.08);
-            --text-primary: #f3f4f6;
-            --text-secondary: #9ca3af;
-            --taiwan-up: #ef4444; /* 🔴 台灣紅漲 */
-            --taiwan-down: #10b981; /* 🟢 台灣綠跌 */
-            --flat-color: #6b7280;
-            --primary-accent: #ff9f43;
-        }}
-        
-        * {{
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }}
-        
-        body {{
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 24px;
-            min-height: 100vh;
-            background-image: radial-gradient(circle at 10% 20%, rgba(30, 41, 59, 0.4) 0%, transparent 90%),
-                              radial-gradient(circle at 90% 80%, rgba(15, 23, 42, 0.6) 0%, transparent 90%);
-            background-attachment: fixed;
-        }}
-        
-        header {{
-            margin-bottom: 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 20px;
-        }}
-        
-        .header-left h1 {{
-            font-family: 'Outfit', sans-serif;
-            font-size: 2.2rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #ff9f43 0%, #ff5252 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 4px;
-        }}
-        
-        .subtitle {{
-            color: var(--text-secondary);
-            font-size: 1rem;
-        }}
-        
-        /* Premium Search Input */
-        .search-box {{
-            flex: 1;
-            max-width: 480px;
-            min-width: 280px;
-            position: relative;
-        }}
-        
-        .search-box input {{
-            width: 100%;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 12px 16px;
-            color: var(--text-primary);
-            font-size: 0.95rem;
-            outline: none;
-            transition: all 0.3s;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-        }}
-        
-        .search-box input:focus {{
-            border-color: var(--primary-accent);
-            background: rgba(255, 255, 255, 0.08);
-            box-shadow: 0 4px 20px rgba(255, 159, 67, 0.15);
-        }}
-        
-        /* Dashboard Container Layout */
-        .dashboard-grid {{
-            display: grid;
-            grid-template-columns: 7fr 3fr;
-            gap: 24px;
-            align-items: start;
-        }}
-        
-        @media (max-width: 1200px) {{
-            .dashboard-grid {{
-                grid-template-columns: 1fr;
-            }}
-        }}
-        
-        /* Left Column Content */
-        .left-content {{
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }}
-        
-        /* Treemap Visualizer Card */
-        .treemap-card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 20px;
-            padding: 24px;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3);
-            height: 600px;
-            display: flex;
-            flex-direction: column;
-        }}
-        
-        .treemap-card h2 {{
-            font-family: 'Outfit', sans-serif;
-            font-size: 1.3rem;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        .treemap-chart {{
-            flex: 1;
-            width: 100%;
-        }}
-        
-        /* Grid Heatmap styling */
-        .heatmap-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 12px;
-            margin-bottom: 12px;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            padding-top: 20px;
-        }}
-        
-        .heatmap-header h2 {{
-            font-family: 'Outfit', sans-serif;
-            font-size: 1.5rem;
-        }}
-        
-        /* Tab Period Selector */
-        .tabs {{
-            display: inline-flex;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 4px;
-            backdrop-filter: blur(8px);
-        }}
-        
-        .tab-btn {{
-            background: transparent;
-            border: none;
-            color: var(--text-secondary);
-            font-family: 'Outfit', sans-serif;
-            font-size: 0.9rem;
-            font-weight: 600;
-            padding: 8px 18px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }}
-        
-        .tab-btn.active {{
-            background: linear-gradient(135deg, #ff9f43 0%, #ff5252 100%);
-            color: #ffffff;
-            box-shadow: 0 4px 16px rgba(255, 82, 82, 0.3);
-        }}
-        
-        /* Global Collapse/Expand controls */
-        .global-controls {{
-            display: flex;
-            gap: 12px;
-        }}
-        
-        .ctrl-btn {{
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            font-size: 0.8rem;
-            font-family: 'Outfit', sans-serif;
-            font-weight: 600;
-            padding: 6px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }}
-        
-        .ctrl-btn:hover {{
-            background: rgba(255, 255, 255, 0.08);
-            color: var(--text-primary);
-            border-color: rgba(255, 255, 255, 0.15);
-        }}
-        
-        .master-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-            gap: 16px;
-        }}
-        
-        .main-card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 12px 14px;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-            transition: border-color 0.3s;
-            order: 999;
-        }}
-        
-        .main-card:hover {{
-            border-color: rgba(255, 255, 255, 0.15);
-        }}
-        
-        .main-card-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            padding-bottom: 12px;
-            margin-bottom: 16px;
-        }}
-        
-        .main-title {{
-            font-family: 'Outfit', sans-serif;
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #ffffff;
-        }}
-        
-        .main-change-badge {{
-            font-family: 'Outfit', sans-serif;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }}
-        
-        .sub-category-list {{
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }}
-        
-        .sub-section {{
-            background: rgba(255, 255, 255, 0.015);
-            border-radius: 8px;
-            padding: 6px 8px;
-            border: 1px solid rgba(255, 255, 255, 0.02);
-            transition: all 0.2s;
-        }}
-        
-        .sub-section:hover {{
-            background: rgba(255, 255, 255, 0.04);
-        }}
-        
-        .sub-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            user-select: none;
-        }}
-        
-        .sub-title {{
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            display: flex;
-            align-items: center;
-        }}
-        
-        .toggle-arrow {{
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-right: 8px;
-            display: inline-block;
-            width: 12px;
-        }}
-        
-        .sub-count-badge {{
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 6px;
-            margin-right: 8px;
-            font-weight: 600;
-        }}
-        
-        .sub-change-badge {{
-            font-size: 0.85rem;
-            font-weight: 600;
-            font-family: 'Outfit', sans-serif;
-            transition: color 0.3s;
-        }}
-        
-        /* Sub-Sub Section (小 Level - 細分次產業) */
-        .sub-sub-section {{
-            background: rgba(255, 255, 255, 0.01);
-            border-radius: 6px;
-            padding: 4px 6px;
-            border: 1px solid rgba(255, 255, 255, 0.015);
-            transition: all 0.2s;
-            margin-top: 4px;
-        }}
-        
-        .sub-sub-section:hover {{
-            background: rgba(255, 255, 255, 0.03);
-        }}
-        
-        .sub-sub-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            user-select: none;
-        }}
-        
-        .sub-sub-title {{
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            display: flex;
-            align-items: center;
-        }}
-        
-        .toggle-sub-arrow {{
-            font-size: 0.65rem;
-            color: var(--text-secondary);
-            margin-right: 6px;
-            display: inline-block;
-            width: 10px;
-        }}
-        
-        .sub-sub-change-badge {{
-            font-size: 0.8rem;
-            font-weight: 600;
-            font-family: 'Outfit', sans-serif;
-            transition: color 0.3s;
-        }}
-        
-        /* Stock Pills Grid */
-        .stock-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-            gap: 4px;
-            margin-top: 6px;
-            border-top: 1px dashed rgba(255, 255, 255, 0.05);
-            padding-top: 6px;
-        }}
-        
-        
-        .s-subtag {{
-            font-size: 0.7rem;
-            color: rgba(255, 255, 255, 0.45);
-            background: rgba(255, 255, 255, 0.05);
-            padding: 1px 5px;
-            border-radius: 3px;
-            margin-left: 4px;
-            margin-right: auto;
-        }}
-    
-        .stock-pill {{
-            background: rgba(75, 85, 99, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.04);
-            border-radius: 4px;
-            padding: 3px 4px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            user-select: none;
-            text-align: center;
-        }}
-        
-        .stock-pill:hover {{
-            transform: translateY(-1px);
-            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
-            border-color: rgba(255, 255, 255, 0.2) !important;
-        }}
-        
-        .s-name {{
-            font-size: 0.72rem;
-            font-weight: 600;
-            color: #ffffff;
-            margin-bottom: 0px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            width: 100%;
-        }}
-        
-        .s-change {{
-            font-size: 0.65rem;
-            font-weight: 700;
-            font-family: 'Outfit', sans-serif;
-        }}
-        
-        /* Side Panel (Right Column) */
-        .side-panel {{
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }}
-        
-        .side-card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 20px;
-            padding: 20px;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3);
-        }}
-        
-        .side-card h2 {{
-            font-family: 'Outfit', sans-serif;
-            font-size: 1.15rem;
-            margin-bottom: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        /* Breadth Grid */
-        .breadth-grid {{
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-        }}
-        
-        .b-card {{
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            padding: 10px;
-            text-align: center;
-        }}
-        
-        .b-card h4 {{
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            margin-bottom: 2px;
-        }}
-        
-        .b-card .b-val {{
-            font-size: 1.3rem;
-            font-weight: 700;
-            font-family: 'Outfit', sans-serif;
-        }}
-        
-        /* Tables and Rankings */
-        .rank-tabs {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-bottom: 12px;
-            background: rgba(255, 255, 255, 0.03);
-            padding: 4px;
-            border-radius: 8px;
-        }}
-        
-        .rank-tab-btn {{
-            background: transparent;
-            border: none;
-            color: var(--text-secondary);
-            font-family: 'Outfit', sans-serif;
-            font-size: 0.85rem;
-            font-weight: 600;
-            padding: 6px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }}
-        
-        .rank-tab-btn.active {{
-            background: rgba(255, 255, 255, 0.08);
-            color: #ffffff;
-        }}
-        
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }}
-        
-        th, td {{
-            padding: 8px 10px;
-            text-align: left;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }}
-        
-        th {{
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-        }}
-        
-        tbody tr:hover {{
-            background: rgba(255, 255, 255, 0.03);
-            cursor: pointer;
-        }}
-        
-        .up {{
-            color: var(--taiwan-up);
-            font-weight: 600;
-        }}
-        
-        .down {{
-            color: var(--taiwan-down);
-            font-weight: 600;
-        }}
-        
-        .tag {{
-            background: rgba(255, 255, 255, 0.05);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-        }}
-        
-        /* Bulk Analysis panel styling */
-        .bulk-stats-header {{
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
-        }}
-        .bulk-tag-list {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-        }}
-        .bulk-sec-tag {{
-            background: rgba(255, 159, 67, 0.15);
-            border: 1px solid rgba(255, 159, 67, 0.3);
-            color: #ff9f43;
-            font-size: 0.75rem;
-            padding: 3px 8px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }}
-        .bulk-sec-tag:hover {{
-            background: rgba(255, 159, 67, 0.3);
-            border-color: #ff9f43;
-        }}
-        
-        .toggle-main-arrow {{
-            cursor: pointer;
-            transition: transform 0.2s;
-        }}
-        
-        /* Clear Search Cross Button inside search bar */
-        .clear-search-btn {{
-            position: absolute;
-            right: 12px;
-            cursor: pointer;
-            color: var(--text-secondary);
-            font-size: 1.2rem;
-            user-select: none;
-            display: none;
-            transition: color 0.2s;
-            z-index: 10;
-        }}
-        .clear-search-btn:hover {{
-            color: var(--primary-accent);
-        }}
-        
-        /* Floating Back to Map Button */
-        .floating-back-btn {{
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            background: linear-gradient(135deg, #ff9f43 0%, #ff5252 100%);
-            color: #fff;
-            border: none;
-            border-radius: 50px;
-            padding: 12px 24px;
-            font-size: 0.95rem;
-            font-weight: bold;
-            box-shadow: 0 4px 20px rgba(255, 82, 82, 0.4);
-            cursor: pointer;
-            z-index: 9999;
-            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            display: none; /* Hidden by default */
-            align-items: center;
-            gap: 8px;
-        }}
-        .floating-back-btn:hover {{
-            transform: translateY(-3px) scale(1.05);
-            box-shadow: 0 6px 24px rgba(255, 82, 82, 0.6);
-        }}
-        .floating-back-btn:active {{
-            transform: translateY(1px);
-        }}
-    </style>
-</head>
-<body>
-    <header>
-        <div class="header-left">
-            <h1>👑 台股產業資金流向圖</h1>
-            <p class="subtitle">統計日期：{date_str} (相較於前一交易日 {prev_date_str}) | 跨週期產業板塊熱力圖</p>
-        </div>
-        <div class="search-box" style="display: flex; align-items: center; gap: 8px;">
-            <div style="position: relative; flex: 1; display: flex; align-items: center;">
-                <input type="text" id="search-input" placeholder="🔍 搜尋個股名稱、代碼 (如: 台積電 或 2330)..." oninput="searchStocks()" style="width: 100%; padding-right: 32px;">
-                <span id="clear-search" class="clear-search-btn" onclick="clearSearch()">&times;</span>
-            </div>
-            <button class="ctrl-btn" onclick="toggleBulkPanel()" title="適合同時篩選、分析多檔個股（如貼上整份自選股名單）以觀察其板塊分佈時使用" style="white-space: nowrap; height: 100%; padding: 10px 14px;">📋 批次分析</button>
-        </div>
-    </header>
-    
-    <!-- Bulk Analysis Panel -->
-    <div id="bulk-panel" style="display: none; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px; margin-bottom: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(12px);">
-        <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.6;">
-            💡 <strong>適用場景</strong>：當您需要同時查看、分析多檔個股（例如貼上您的<strong>整份自選股名單</strong>）時，使用此功能可一次性篩選，並在下方統計它們分佈在哪些產業板塊與平均表現。<br/>
-            📋 請貼上個股代號或名稱，用空格、逗號或換行隔開 (例如: 2330, 欣興, 3583)：
-        </div>
-        <textarea id="bulk-input" rows="3" style="width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; color: #fff; font-size: 0.9rem; outline: none; resize: vertical; font-family: inherit;" placeholder="在此貼上代號或股名..." oninput="analyzeBulk()"></textarea>
-        <div id="bulk-results" style="margin-top: 12px; display: none;"></div>
-    </div>
-    
-    <div class="dashboard-grid">
-        <!-- Left Side: Treemap & Collapsible Heatmap -->
-        <div class="left-content">
-            <!-- ECharts Treemap Chart -->
-            <div class="treemap-card">
-                <h2>📈 台股產業資金流向熱力地圖 <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: normal; margin-left: 8px;">(區域面積代表市值規模，顏色代表該週期漲跌幅)</span></h2>
-                <div id="treemap-chart" class="treemap-chart"></div>
-            </div>
-            
-            <!-- Heatmap Title and Filters -->
-            <div class="heatmap-header">
-                <h2>🗂️ 全個股大師熱力地圖</h2>
-                
-                <div class="tabs">
-                    <button class="tab-btn active" onclick="switchPeriod('1d')">今日漲跌 (1D)</button>
-                    <button class="tab-btn" onclick="switchPeriod('5d')">週累積 (5D)</button>
-                    <button class="tab-btn" onclick="switchPeriod('10d')">雙週累積 (10D)</button>
-                    <button class="tab-btn" onclick="switchPeriod('20d')">月累積 (20D)</button>
-                </div>
-                
-                <div class="global-controls">
-                    <button class="ctrl-btn" onclick="toggleAll(true)">展開全部</button>
-                    <button class="ctrl-btn" onclick="toggleAll(false)">收合全部</button>
-                </div>
-            </div>
-            
-            <!-- Heatmap Cards -->
-            <main class="master-grid">
-                {all_grid_elements_html}
-            </main>
-        </div>
-        
-        <!-- Right Side: Statistics and Rankings -->
-        <aside class="side-panel">
-            <!-- Market Breadth -->
-            <div class="side-card">
-                <h2>📊 全市場漲跌家數</h2>
-                <div class="breadth-grid">
-                    <div class="b-card">
-                        <h4>個股總數</h4>
-                        <div id="stat-total" class="b-val" style="color: #60a5fa;">0</div>
-                    </div>
-                    <div class="b-card">
-                        <h4>🔴 上漲家數</h4>
-                        <div id="stat-up" class="b-val" style="color: var(--taiwan-up);">0</div>
-                    </div>
-                    <div class="b-card">
-                        <h4>🟢 下跌家數</h4>
-                        <div id="stat-down" class="b-val" style="color: var(--taiwan-down);">0</div>
-                    </div>
-                    <div class="b-card">
-                        <h4>⚪ 平盤家數</h4>
-                        <div id="stat-flat" class="b-val" style="color: var(--flat-color);">0</div>
-                    </div>
-                    <div class="b-card">
-                        <h4>🔥 漲停家數</h4>
-                        <div id="stat-limit-up" class="b-val" style="color: #ef4444; font-weight: bold;">0</div>
-                    </div>
-                    <div class="b-card">
-                        <h4>❄️ 跌停家數</h4>
-                        <div id="stat-limit-down" class="b-val" style="color: #10b981; font-weight: bold;">0</div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Capital Flow & Quiet Risers Radar -->
-            <div class="side-card">
-                <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">🔥 資金流向與黑馬雷達</h2>
-                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 10px;">(結合價量關係，即時追蹤資金流向與默默緩漲黑馬)</p>
-                
-                <!-- Toggle Flow tabs -->
-                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-                    <button class="rank-tab-btn active" id="btn-flow-inflow" onclick="setFlowTab('inflow')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🔥 資金淨流入</button>
-                    <button class="rank-tab-btn" id="btn-flow-outflow" onclick="setFlowTab('outflow')" style="flex: 1; padding: 6px; font-size: 0.8rem;">⚠️ 資金淨流出</button>
-                    <button class="rank-tab-btn" id="btn-flow-risers" onclick="setFlowTab('risers')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🐢 默默緩漲</button>
-                </div>
-                
-                <div style="max-height: 400px; overflow-y: auto; border-radius: 6px;">
-                    <table style="width: 100%;">
-                        <thead style="position: sticky; top: 0; background: #161c2d; z-index: 5;">
-                            <tr>
-                                <th style="width: 42%;">族群名稱</th>
-                                <th id="flow-header-metric" style="white-space: nowrap;">比重 (量能比)</th>
-                                <th>幅度</th>
-                            </tr>
-                        </thead>
-                        <tbody id="flow-table-body">
-                            <!-- Dynamic -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <!-- Sub-sectors & Mid-clusters Averages Rankings -->
-            <div class="side-card">
-                <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; color: #f3f4f6;">📊 族群與產業強弱排行榜</h2>
-                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 10px;">(切換「分類層級」與「領漲/領跌」查看 Top 10 排行榜)</p>
-                
-                <!-- Toggle Row 1: Category Scope -->
-                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-                    <button class="rank-tab-btn active" id="btn-scope-mid" onclick="setRankScope('mid')" style="flex: 1; padding: 6px; font-size: 0.8rem;">📁 中型概念族群</button>
-                    <button class="rank-tab-btn" id="btn-scope-sub" onclick="setRankScope('sub')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🏷️ 細分次產業</button>
-                </div>
-                
-                <!-- Toggle Row 2: Direction -->
-                <div style="display: flex; gap: 6px; margin-bottom: 12px;">
-                    <button class="rank-tab-btn active" id="btn-dir-leaders" onclick="setRankDir('leaders')" style="flex: 1; padding: 6px; font-size: 0.8rem;">🔥 強勢領漲 Top 10</button>
-                    <button class="rank-tab-btn" id="btn-dir-laggards" onclick="setRankDir('laggards')" style="flex: 1; padding: 6px; font-size: 0.8rem;">❄️ 弱勢領跌 Top 10</button>
-                </div>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th>族群 / 產業名稱</th>
-                            <th>平均漲跌</th>
-                            <th>股數</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sub-rank-table-body">
-                        <!-- Dynamic -->
-                    </tbody>
-                </table>
-            </div>
-            
-            <!-- Leaders/Laggards Ranks -->
-            <div class="side-card">
-                <div class="rank-tabs">
-                    <button class="rank-tab-btn active" onclick="switchRank('leaders')">🔥 領漲排行</button>
-                    <button class="rank-tab-btn" onclick="switchRank('laggards')">❄️ 領跌排行</button>
-                </div>
-                
-                <table id="rank-table">
-                    <thead>
-                        <tr>
-                            <th>代號</th>
-                            <th>股名</th>
-                            <th>幅度 %</th>
-                            <th>次產業</th>
-                        </tr>
-                    </thead>
-                    <tbody id="rank-table-body">
-                        <!-- Dynamic -->
-                    </tbody>
-                </table>
-            </div>
-            
-            <!-- Icon & Indicator Legend Explanations -->
-            <div class="side-card" style="padding: 12px; font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); background: rgba(255,255,255,0.01); border: 1px dashed rgba(255,255,255,0.08);">
-                <h3 style="font-size: 0.9rem; font-weight: 700; margin-bottom: 8px; color: #f3f4f6; display: flex; align-items: center; gap: 6px;">💡 指標與圖例說明</h3>
-                <ul style="list-style-type: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 6px;">
-                    <li>🐢 <strong style="color: var(--taiwan-up);">緩漲黑馬</strong>：過去 5D/10D/20D 累積溫和上漲、收紅天數佔比高（&ge; 60%）、日均波動度低，通常為主力默默進貨之低調起漲族群。</li>
-                    <li>📊 <strong style="color: #60a5fa;">5日資金比重走勢 (Sparkline)</strong>：顯示過去 5 日該板塊佔大盤成交金額的比重走勢。柱子越長代表比重越高；柱子持續走高代表資金正在持續流入。</li>
-                    <li>🔥 <strong style="color: var(--taiwan-up);">資金淨流入</strong>：結合價量，指板塊「上漲」且「量能比 (VER)」大於 1.0 的板塊，分數越高代表量價俱揚越顯著。</li>
-                    <li>⚠️ <strong style="color: var(--taiwan-down);">資金淨流出</strong>：結合價量，指板塊「下跌」且「量能比 (VER)」大於 1.0 的板塊，分數越低代表放量下殺越嚴重。</li>
-                    <li>📈 <strong>比重 (量能比)</strong>：今日該板塊成交金額佔全市場之百分比，括號內為 VER（當前平均成交額 / 20日基準均量，例如 1.5x 代表成交量擴增至均量的 1.5 倍）。</li>
-                </ul>
-            </div>
-        </aside>
-    </div>
-    
-    <!-- Floating Back/Clear Button -->
-    <button id="floating-clear-btn" class="floating-back-btn" onclick="clearSearch()">
-        ↩ 返回資金地圖 (清除篩選)
-    </button>
-    
-    <script>
-        // Load datasets
-        const payload = {cat_averages_json};
-        
-        // ECharts Init
-        const treemapChart = echarts.init(document.getElementById('treemap-chart'), 'dark');
-        
-        function getFilteredTreemap(originalData, matchedTickers) {{
-            const result = [];
-            originalData.forEach(mainNode => {{
-                const newMainChildren = [];
-                let mainMcapSum = 0;
-                let mainChangeSum = 0;
-                let mainChangeCount = 0;
-                
-                mainNode.children.forEach(subNode => {{
-                    const newSubChildren = [];
-                    let subMcapSum = 0;
-                    let subChangeSum = 0;
-                    let subChangeCount = 0;
-                    
-                    subNode.children.forEach(stockNode => {{
-                        const ticker = stockNode.ticker;
-                        if (matchedTickers.has(ticker)) {{
-                            newSubChildren.push(stockNode);
-                            subMcapSum += stockNode.value[0];
-                            subChangeSum += stockNode.change;
-                            subChangeCount++;
-                        }}
-                    }});
-                    
-                    if (newSubChildren.length > 0) {{
-                        const subAvg = subChangeCount > 0 ? (subChangeSum / subChangeCount) : 0;
-                        const subCleanName = subNode.name.split(' (')[0];
-                        newMainChildren.push({{
-                            name: `${{subCleanName}} (${{subAvg >= 0 ? '+' : ''}}${{subAvg.toFixed(2)}}%)`,
-                            value: [subMcapSum, subAvg],
-                            change: subAvg,
-                            children: newSubChildren.sort((a, b) => b.value[0] - a.value[0])
-                        }});
-                        
-                        mainMcapSum += subMcapSum;
-                        mainChangeSum += subAvg;
-                        mainChangeCount++;
-                    }}
-                }});
-                
-                if (newMainChildren.length > 0) {{
-                    const mainAvg = mainChangeCount > 0 ? (mainChangeSum / mainChangeCount) : 0;
-                    const mainCleanName = mainNode.name.split(' (')[0];
-                    result.push({{
-                        name: `${{mainCleanName}} (${{mainAvg >= 0 ? '+' : ''}}${{mainAvg.toFixed(2)}}%)`,
-                        value: [mainMcapSum, mainAvg],
-                        change: mainAvg,
-                        children: newMainChildren.sort((a, b) => b.value[0] - a.value[0])
-                    }});
-                }}
-            }});
-            
-            return result.sort((a, b) => b.value[0] - a.value[0]);
-        }}
-        
-        let currentPeriod = '1d';
-        let currentRankTab = 'leaders';
-        let currentSubRankTab = 'leaders';
-        
-        // Collapsible sector functions
-        function toggleMainCard(mainSafeId) {{
-            const card = document.getElementById(mainSafeId);
-            if (!card) return;
-            
-            const list = card.querySelector('.sub-category-list');
-            const arrow = card.querySelector('.toggle-main-arrow');
-            
-            if (list.style.display === 'none' || list.style.display === '') {{
-                list.style.display = 'flex';
-                if (arrow) arrow.innerText = '▼';
-            }} else {{
-                list.style.display = 'none';
-                if (arrow) arrow.innerText = '▶';
-            }}
-        }}
-        
-        function toggleSubSection(subSafeId) {{
-            const section = document.getElementById(subSafeId);
-            if (!section) return;
-            
-            const midContent = section.querySelector('.mid-content');
-            const arrow = section.querySelector('.toggle-arrow');
-            
-            if (!midContent) return;
-            
-            if (midContent.style.display === 'none' || midContent.style.display === '') {{
-                midContent.style.display = 'flex';
-                if (arrow) arrow.innerText = '▼';
-                
-                // If there is a direct stock-grid child (no sub-sub-section), display it
-                const grid = midContent.querySelector('.stock-grid');
-                if (grid && !grid.closest('.sub-sub-section')) {{
-                    grid.style.display = 'grid';
-                }}
-            }} else {{
-                midContent.style.display = 'none';
-                if (arrow) arrow.innerText = '▶';
-            }}
-        }}
-        
-        function toggleSubSubSection(subSubSafeId) {{
-            const section = document.getElementById(subSubSafeId);
-            if (!section) return;
-            
-            const grid = section.querySelector('.stock-grid');
-            const arrow = section.querySelector('.toggle-sub-arrow');
-            
-            if (!grid) return;
-            
-            if (grid.style.display === 'none' || grid.style.display === '') {{
-                grid.style.display = 'grid';
-                if (arrow) arrow.innerText = '▼';
-            }} else {{
-                grid.style.display = 'none';
-                if (arrow) arrow.innerText = '▶';
-            }}
-        }}
-        
-        function toggleAll(expand) {{
-            const subLists = document.querySelectorAll('.sub-category-list');
-            const mainArrows = document.querySelectorAll('.toggle-main-arrow');
-            const midContents = document.querySelectorAll('.mid-content');
-            const subArrows = document.querySelectorAll('.toggle-arrow');
-            const grids = document.querySelectorAll('.stock-grid');
-            const subSubArrows = document.querySelectorAll('.toggle-sub-arrow');
-            
-            subLists.forEach(list => {{
-                list.style.display = expand ? 'flex' : 'none';
-            }});
-            mainArrows.forEach(arrow => {{
-                arrow.innerText = expand ? '▼' : '▶';
-            }});
-            midContents.forEach(mc => {{
-                mc.style.display = expand ? 'flex' : 'none';
-            }});
-            subArrows.forEach(arrow => {{
-                arrow.innerText = expand ? '▼' : '▶';
-            }});
-            grids.forEach(grid => {{
-                grid.style.display = expand ? 'grid' : 'none';
-            }});
-            subSubArrows.forEach(arrow => {{
-                arrow.innerText = expand ? '▼' : '▶';
-            }});
-        }}
-        
-        // Focus and scroll to sector card
-        function focusSectorCard(mainSafeId) {{
-            const card = document.getElementById(mainSafeId);
-            if (card) {{
-                card.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-                
-                // Flash border to draw attention
-                card.style.borderColor = 'var(--primary-accent)';
-                setTimeout(() => {{
-                    card.style.borderColor = 'var(--border-color)';
-                }}, 1500);
-            }}
-        }}
-        
-        // Search stock function
-        function searchStocks() {{
-            const query = document.getElementById('search-input').value.toLowerCase().trim();
-            const pills = document.querySelectorAll('.stock-pill');
-            const cards = document.querySelectorAll('.main-card');
-            
-            const clearSearch = document.getElementById('clear-search');
-            const floatingClearBtn = document.getElementById('floating-clear-btn');
-            
-            if (query === "") {{
-                if (clearSearch) clearSearch.style.display = 'none';
-                if (floatingClearBtn) floatingClearBtn.style.display = 'none';
-                cards.forEach(card => {{
-                    card.style.display = 'block';
-                    const mInfo = Object.values(payload[currentPeriod].main_gp).find(m => m.safe_id === card.id);
-                    if (mInfo) {{
-                        card.style.order = mInfo.rank;
-                    }}
-                    card.querySelector('.sub-category-list').style.display = 'none';
-                    const arrow = card.querySelector('.toggle-main-arrow');
-                    if (arrow) arrow.innerText = '▶';
-                }});
-                toggleAll(false);
-                pills.forEach(pill => {{
-                    pill.style.opacity = "1";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
-                }});
-                // Restore Treemap
-                treemapChart.setOption({{
-                    series: [{{
-                        data: payload[currentPeriod].treemap
-                    }}]
-                }});
-                return;
-            }}
-            
-            if (clearSearch) clearSearch.style.display = 'block';
-            if (floatingClearBtn) floatingClearBtn.style.display = 'flex';
-            
-            // Check if there is an exact match for the query
-            let hasExactMatch = false;
-            pills.forEach(pill => {{
-                const name = pill.getAttribute('data-name').trim().toLowerCase();
-                const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
-                if (name === query || ticker === query) {{
-                    hasExactMatch = true;
-                }}
-            }});
-            
-            const matchedCardIds = new Set();
-            const matchedTickers = new Set();
-            
-            pills.forEach(pill => {{
-                const name = pill.getAttribute('data-name').trim().toLowerCase();
-                const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
-                const mainCat = (pill.getAttribute('data-main-cat') || '').trim().toLowerCase();
-                const subCat = (pill.getAttribute('data-sub-cat') || '').trim().toLowerCase();
-                
-                let isMatch = false;
-                if (hasExactMatch) {{
-                    isMatch = (name === query || ticker === query);
-                }} else {{
-                    isMatch = (name.includes(query) || 
-                               ticker.includes(query) || 
-                               mainCat.includes(query) || 
-                               subCat.includes(query));
-                }}
-                
-                if (isMatch) {{
-                    pill.style.opacity = "1";
-                    pill.style.border = "2px solid var(--primary-accent)";
-                    matchedTickers.add(ticker);
-                    
-                    const parentGrid = pill.closest('.stock-grid');
-                    if (parentGrid) {{
-                        parentGrid.style.display = 'grid';
-                        
-                        // Expand mid level
-                        const midContent = parentGrid.closest('.mid-content');
-                        if (midContent) {{
-                            midContent.style.display = 'flex';
-                            const subSection = midContent.closest('.sub-section');
-                            if (subSection) {{
-                                const arrow = subSection.querySelector('.toggle-arrow');
-                                if (arrow) arrow.innerText = '▼';
-                            }}
-                        }}
-                        
-                        // Expand sub level
-                        const subSubSection = parentGrid.closest('.sub-sub-section');
-                        if (subSubSection) {{
-                            const subArrow = subSubSection.querySelector('.toggle-sub-arrow');
-                            if (subArrow) subArrow.innerText = '▼';
-                        }}
-                    }}
-                    
-                    const mainCard = pill.closest('.main-card');
-                    if (mainCard) {{
-                        matchedCardIds.add(mainCard.id);
-                        mainCard.querySelector('.sub-category-list').style.display = 'flex';
-                        const mainArrow = mainCard.querySelector('.toggle-main-arrow');
-                        if (mainArrow) mainArrow.innerText = '▼';
-                    }}
-                }} else {{
-                    pill.style.opacity = "0.15";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
-                }}
-            }});
-            
-            // Reorder and hide cards
-            cards.forEach(card => {{
-                if (matchedCardIds.has(card.id)) {{
-                    card.style.display = 'block';
-                    const mInfo = Object.values(payload[currentPeriod].main_gp).find(m => m.safe_id === card.id);
-                    if (mInfo) {{
-                        card.style.order = mInfo.rank - 1000; // Float to the absolute top!
-                    }}
-                }} else {{
-                    card.style.display = 'none'; // Hide non-matching sectors!
-                }}
-            }});
-            
-            // Scroll to the top of the heatmap section smoothly
-            const gridContainer = document.querySelector('.master-grid');
-            if (gridContainer) {{
-                gridContainer.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-            }}
-            
-            // Update Treemap
-            const filteredTreemapData = getFilteredTreemap(payload[currentPeriod].treemap, matchedTickers);
-            treemapChart.setOption({{
-                series: [{{
-                    data: filteredTreemapData
-                }}]
-            }});
-        }}
-        
-        // Bulk analysis functions
-        function toggleBulkPanel() {{
-            const panel = document.getElementById('bulk-panel');
-            if (panel.style.display === 'none' || panel.style.display === '') {{
-                panel.style.display = 'block';
-                document.getElementById('bulk-input').focus();
-            }} else {{
-                panel.style.display = 'none';
-                document.getElementById('bulk-input').value = '';
-                analyzeBulk();
-            }}
-        }}
-        
-        function analyzeBulk() {{
-            const text = document.getElementById('bulk-input').value.trim();
-            const pills = document.querySelectorAll('.stock-pill');
-            const cards = document.querySelectorAll('.main-card');
-            
-            if (text === "") {{
-                document.getElementById('bulk-results').style.display = 'none';
-                cards.forEach(card => {{
-                    card.style.display = 'block';
-                    const mInfo = Object.values(payload[currentPeriod].main_gp).find(m => m.safe_id === card.id);
-                    if (mInfo) {{
-                        card.style.order = mInfo.rank;
-                    }}
-                    card.querySelector('.sub-category-list').style.display = 'none';
-                    const arrow = card.querySelector('.toggle-main-arrow');
-                    if (arrow) arrow.innerText = '▶';
-                }});
-                toggleAll(false);
-                pills.forEach(pill => {{
-                    pill.style.opacity = "1";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
-                }});
-                // Restore Treemap
-                treemapChart.setOption({{
-                    series: [{{
-                        data: payload[currentPeriod].treemap
-                    }}]
-                }});
-                return;
-            }}
-            
-            // Parse tokens: split by spaces, commas, newlines, etc.
-            const noiseWords = new Set([
-                "電子科技", "加工業", "健康科技", "科技服務", "生產製造", "非能源礦產", "工業服務", 
-                "金融", "運輸", "非耐用消費品", "配送服務", "零售業", "消費者服務", "公用事業",
-                "無評級", "強力買入", "買入", "中立", "強力賣出", "賣出", "觀察清單", "更改排序",
-                "twd", "usd", "cny", "eur", "jpy", "無評", "強力"
-            ]);
-            const rawTerms = text.split(/[\\s,，\\n、]+/).map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
-            const terms = rawTerms.filter(token => {{
-                if (token.length <= 1) return false;
-                if (/^[-+]?\\d+(\\.\\d+)?%?$/.test(token)) return false; // Exclude numbers with decimals or percentage signs
-                if (noiseWords.has(token)) return false;
-                return true;
-            }});
-            if (terms.length === 0) return;
-            
-            // For each term, check if it matches any name/ticker exactly
-            const exactMatches = new Set();
-            terms.forEach(term => {{
-                pills.forEach(pill => {{
-                    const name = pill.getAttribute('data-name').trim().toLowerCase();
-                    const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
-                    if (name === term || ticker === term) {{
-                        exactMatches.add(term);
-                    }}
-                }});
-            }});
-            
-            const matchedCardIds = new Set();
-            const matchedTickers = new Set();
-            const sectorCounts = {{}};
-            let totalMatched = 0;
-            
-            pills.forEach(pill => {{
-                const name = pill.getAttribute('data-name').trim().toLowerCase();
-                const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
-                
-                let isMatch = false;
-                terms.forEach(term => {{
-                    if (exactMatches.has(term)) {{
-                        if (name === term || ticker === term) {{
-                            isMatch = true;
-                        }}
-                    }} else {{
-                        if (name.includes(term) || ticker.includes(term)) {{
-                            isMatch = true;
-                        }}
-                    }}
-                }});
-                
-                if (isMatch) {{
-                    pill.style.opacity = "1";
-                    pill.style.border = "2px solid var(--primary-accent)";
-                    totalMatched++;
-                    matchedTickers.add(ticker);
-                    
-                    const mainCard = pill.closest('.main-card');
-                    if (mainCard) {{
-                        matchedCardIds.add(mainCard.id);
-                        const mainTitle = mainCard.querySelector('.main-title').innerText.replace('▶', '').replace('▼', '').trim();
-                        sectorCounts[mainTitle] = (sectorCounts[mainTitle] || 0) + 1;
-                    }}
-                    
-                    const parentGrid = pill.closest('.stock-grid');
-                    if (parentGrid) {{
-                        parentGrid.style.display = 'grid';
-                        const subSection = parentGrid.closest('.sub-section');
-                        if (subSection) {{
-                            const arrow = subSection.querySelector('.toggle-arrow');
-                            if (arrow) arrow.innerText = '▼';
-                        }}
-                    }}
-                }} else {{
-                    pill.style.opacity = "0.15";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
-                }}
-            }});
-            
-            // Reorder and show matching cards
-            cards.forEach(card => {{
-                if (matchedCardIds.has(card.id)) {{
-                    card.style.display = 'block';
-                    const mInfo = Object.values(payload[currentPeriod].main_gp).find(m => m.safe_id === card.id);
-                    if (mInfo) {{
-                        card.style.order = mInfo.rank - 1000; // Float to the absolute top!
-                    }}
-                    card.querySelector('.sub-category-list').style.display = 'flex';
-                    const arrow = card.querySelector('.toggle-main-arrow');
-                    if (arrow) arrow.innerText = '▼';
-                }} else {{
-                    card.style.display = 'none';
-                }}
-            }});
-            
-            // Scroll to the top of the heatmap section smoothly
-            const gridContainer = document.querySelector('.master-grid');
-            if (gridContainer) {{
-                gridContainer.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-            }}
-            
-            // Update Treemap
-            const filteredTreemapData = getFilteredTreemap(payload[currentPeriod].treemap, matchedTickers);
-            treemapChart.setOption({{
-                series: [{{
-                    data: filteredTreemapData
-                }}]
-            }});
-            
-            // Render sector distribution tags
-            const resultsBox = document.getElementById('bulk-results');
-            resultsBox.style.display = 'block';
-            
-            const sortedSectors = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1]);
-            
-            let resultsHtml = `<div class="bulk-stats-header">🔍 貼上分析結果: 匹配 <strong>${{totalMatched}}</strong> 檔個股，分佈在 <strong>${{sortedSectors.length}}</strong> 個板塊：</div>`;
-            resultsHtml += '<div class="bulk-tag-list">';
-            sortedSectors.forEach(([secName, count]) => {{
-                const pct = ((count / totalMatched) * 100).toFixed(0);
-                resultsHtml += `<span class="bulk-sec-tag" onclick="focusSectorByTitle('${{secName}}')">${{secName}}: <strong>${{count}}檔 (${{pct}}%)</strong></span>`;
-            }});
-            resultsHtml += '</div>';
-            resultsBox.innerHTML = resultsHtml;
-        }}
-        
-        function focusSectorByTitle(secTitle) {{
-            const cards = document.querySelectorAll('.main-card');
-            for (let card of cards) {{
-                const titleText = card.querySelector('.main-title').innerText.replace('▶', '').replace('▼', '').trim();
-                if (titleText === secTitle) {{
-                    focusSectorCard(card.id);
-                    break;
-                }}
-            }}
-        }}
-        
-        function focusStock(stockName) {{
-            document.getElementById('search-input').value = stockName;
-            searchStocks();
-            
-            const pills = document.querySelectorAll('.stock-pill');
-            for (let pill of pills) {{
-                if (pill.getAttribute('data-name') === stockName) {{
-                    pill.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                    break;
-                }}
-            }}
-        }}
-        
-        function clearSearch() {{
-            document.getElementById('search-input').value = "";
-            searchStocks();
-            
-            // Scroll back to the top header / Treemap smooth
-            const header = document.querySelector('header');
-            if (header) {{
-                header.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-            }}
-        }}
-        
-        // Color scale mapping (Red for up, Green for down, Taiwan standard)
-        function getIntensityColor(change, period) {{
-            if (change === undefined || change === null || isNaN(change)) {{
-                return 'rgba(75, 85, 99, 0.15)'; 
-            }}
-            
-            let maxVal = 8.0;
-            if (period === '5d') maxVal = 18.0;
-            if (period === '10d') maxVal = 28.0;
-            if (period === '20d') maxVal = 40.0;
-            
-            const percent = Math.min(Math.abs(change) / maxVal, 1.0);
-            
-            if (change > 0) {{
-                return `rgba(239, 68, 68, ${{0.15 + percent * 0.85}})`;
-            }} else if (change < 0) {{
-                return `rgba(16, 185, 129, ${{0.15 + percent * 0.85}})`;
-            }} else {{
-                return 'rgba(75, 85, 99, 0.35)'; 
-            }}
-        }}
-        
-        // Main function to switch periods on Heatmap & Treemap
-        function switchPeriod(period) {{
-            currentPeriod = period;
-            
-            const buttons = document.querySelectorAll('.tab-btn');
-            buttons.forEach(btn => {{
-                if (btn.getAttribute('onclick') === `switchPeriod('${{period}}')`) {{
-                    btn.classList.add('active');
-                }} else {{
-                    btn.classList.remove('active');
-                }}
-            }});
-            
-            const pData = payload[period];
-            
-            // 1. Update Breadth Stats
-            document.getElementById('stat-total').innerText = pData.stats.total;
-            document.getElementById('stat-up').innerText = pData.stats.up;
-            document.getElementById('stat-down').innerText = pData.stats.down;
-            document.getElementById('stat-flat').innerText = pData.stats.flat;
-            if (document.getElementById('stat-limit-up')) {{
-                document.getElementById('stat-limit-up').innerText = pData.stats.limit_up || 0;
-            }}
-            if (document.getElementById('stat-limit-down')) {{
-                document.getElementById('stat-limit-down').innerText = pData.stats.limit_down || 0;
-            }}
-            
-            // 2. Loop and Update stock pills
-            const pills = document.querySelectorAll('.stock-pill');
-            pills.forEach(pill => {{
-                const valStr = pill.getAttribute(`data-${{period}}`);
-                const val = valStr !== "null" ? parseFloat(valStr) : null;
-                const changeSpan = pill.querySelector('.s-change');
-                
-                if (val !== null) {{
-                    const sign = val >= 0 ? '+' : '';
-                    changeSpan.innerText = sign + val.toFixed(2) + '%';
-                    pill.style.backgroundColor = getIntensityColor(val, period);
-                }} else {{
-                    changeSpan.innerText = '--';
-                    pill.style.backgroundColor = 'rgba(75, 85, 99, 0.15)';
-                }}
-            }});
-            
-            // 3. Update all Card Headers (Main categories and sub categories averages) and re-order cards
-            for (const [mName, mInfo] of Object.entries(pData.main_gp)) {{
-                const badge = document.getElementById("badge-" + mInfo.safe_id);
-                if (badge && typeof mInfo.avg === 'number' && !isNaN(mInfo.avg)) {{
-                    const sign = mInfo.avg >= 0 ? '+' : '';
-                    badge.innerText = `${{sign}}${{mInfo.avg.toFixed(2)}}%`;
-                    badge.style.backgroundColor = getIntensityColor(mInfo.avg, period);
-                    badge.style.color = '#ffffff';
-                }}
-                const card = document.getElementById(mInfo.safe_id);
-                if (card) {{
-                    card.style.order = mInfo.rank;
-                }}
-            }}
-            
-            // Mid headers
-            if (pData.mid_gp) {{
-                for (const [keyStr, mInfo] of Object.entries(pData.mid_gp)) {{
-                    const badge = document.getElementById("badge-" + mInfo.safe_id);
-                    if (badge && typeof mInfo.avg === 'number' && !isNaN(mInfo.avg)) {{
-                        const sign = mInfo.avg >= 0 ? '+' : '';
-                        badge.innerText = `${{sign}}${{mInfo.avg.toFixed(2)}}%`;
-                        badge.style.color = mInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
-                        if (mInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
-                    }}
-                    
-                    const qrBadge = document.getElementById("qr-badge-" + mInfo.safe_id);
-                    if (qrBadge) {{
-                        qrBadge.style.display = mInfo.is_quiet_riser ? 'inline-block' : 'none';
-                    }}
-                }}
-            }}
-            
-            // Sub headers
-            if (pData.sub_gp) {{
-                for (const [keyStr, sInfo] of Object.entries(pData.sub_gp)) {{
-                    const badge = document.getElementById("badge-" + sInfo.safe_id);
-                    if (badge && typeof sInfo.avg === 'number' && !isNaN(sInfo.avg)) {{
-                        const sign = sInfo.avg >= 0 ? '+' : '';
-                        badge.innerText = `${{sign}}${{sInfo.avg.toFixed(2)}}%`;
-                        badge.style.color = sInfo.avg >= 0 ? 'var(--taiwan-up)' : 'var(--taiwan-down)';
-                        if (sInfo.avg === 0) badge.style.color = 'var(--text-secondary)';
-                    }}
-                }}
-            }}
-            
-            // 4. Update Treemap
-            const treemapOption = {{
-                backgroundColor: 'transparent',
-                tooltip: {{
-                    formatter: function (info) {{
-                        var value = info.value;
-                        var name = info.name.split(/\\n| \\(/)[0];
-                        var mcap = Array.isArray(value) ? value[0] : value;
-                        var change = Array.isArray(value) ? value[1] : info.data.change;
-                        var changeStr = change !== undefined ? (change >= 0 ? '▲ +' + change.toFixed(2) + '%' : '▼ ' + change.toFixed(2) + '%') : '';
-                        var changeColor = change >= 0 ? 'color: var(--taiwan-up);' : 'color: var(--taiwan-down);';
-                        
-                        return [
-                            '<div class="tooltip-title" style="font-weight:bold;font-size:1.1rem;margin-bottom:6px;">' + name + '</div>',
-                            '市值規模: ' + (mcap ? mcap.toLocaleString() : 0) + ' 百萬 TWD<br/>',
-                            '該期累積漲跌幅: <span style="font-weight:bold;' + changeColor + '">' + changeStr + '</span>'
-                        ].join('');
-                    }}
-                }},
-                series: [{{
-                    name: '台股產業地圖',
-                    type: 'treemap',
-                    visibleMin: 200,
-                    roam: true,
-                    nodeClick: 'zoomToNode',
-                    left: 0,
-                    right: 0,
-                    top: 10,
-                    bottom: 45,
-                    label: {{
-                        show: true,
-                        formatter: '{{b}}',
-                        fontSize: 11
-                    }},
-                    upperLabel: {{
-                        show: true,
-                        height: 22,
-                        color: '#fff',
-                        fontWeight: 'bold',
-                        fontSize: 12
-                    }},
-                    breadcrumb: {{
-                        show: true,
-                        bottom: 45, // Move breadcrumb up to avoid overlapping with visualMap
-                        itemStyle: {{
-                            color: 'rgba(255, 255, 255, 0.1)',
-                            textStyle: {{
-                                color: '#e5e7eb',
-                                fontSize: 11
-                            }}
-                        }}
-                    }},
-                    itemStyle: {{
-                        borderColor: '#161c2d',
-                        borderWidth: 1.5,
-                        gapWidth: 1
-                    }},
-                    levels: [
-                        {{
-                            itemStyle: {{
-                                borderColor: '#161c2d',
-                                borderWidth: 4,
-                                gapWidth: 4
-                            }},
-                            upperLabel: {{
-                                show: true
-                            }}
-                        }},
-                        {{
-                            itemStyle: {{
-                                borderColor: '#161c2d',
-                                borderWidth: 2,
-                                gapWidth: 2
-                            }}
-                        }},
-                        {{
-                            colorMappingBy: 'value',
-                            itemStyle: {{
-                                gapWidth: 1
-                            }}
-                        }}
-                    ],
-                    data: pData.treemap
-                }}],
-                visualMap: {{
-                    type: 'continuous',
-                    min: period === '1d' ? -5 : (period === '5d' ? -15 : (period === '10d' ? -25 : -35)),
-                    max: period === '1d' ? 5 : (period === '5d' ? 15 : (period === '10d' ? 25 : 35)),
-                    visualDimension: 1,
-                    calculable: true,
-                    orient: 'horizontal',
-                    left: 'center',
-                    bottom: 5, // Positioned slightly above the bottom line
-                    inRange: {{
-                        color: ['#10b981', '#374151', '#ef4444']
-                    }},
-                    text: ['漲 ▲', '▼ 跌'],
-                    textStyle: {{
-                        color: '#9ca3af',
-                        fontWeight: 'bold'
-                    }}
-                }}
-            }};
-            treemapChart.setOption(treemapOption);
-            
-            // 5. Update Rank Tables
-            switchRank(currentRankTab);
-            renderSubRankTable();
-            renderFlowTable();
-        }}
-        
-        // Switch between Leaders and Laggards
-        function switchRank(tab) {{
-            currentRankTab = tab;
-            
-            const buttons = document.querySelectorAll('.rank-tab-btn');
-            buttons.forEach(btn => btn.classList.remove('active'));
-            if (tab === 'leaders') {{
-                buttons[0].classList.add('active');
-            }} else {{
-                buttons[1].classList.add('active');
-            }}
-            
-            const list = payload[currentPeriod][tab];
-            const tbody = document.getElementById('rank-table-body');
-            tbody.innerHTML = '';
-            
-            list.forEach(r => {{
-                const classColor = r.change >= 0 ? 'up' : 'down';
-                const sign = r.change >= 0 ? '+' : '';
-                
-                tbody.innerHTML += `
-                    <tr onclick="focusStock('${{r.name}}')">
-                        <td><code>${{r.ticker}}</code></td>
-                        <td><strong>${{r.name}}</strong></td>
-                        <td class="${{classColor}}">${{sign}}${{r.change.toFixed(2)}}%</td>
-                        <td><span class="tag">${{r.sub_cat}}</span></td>
-                    </tr>
-                `;
-            }});
-        }}
-        
-        let currentRankScope = 'mid'; // 'mid' or 'sub'
-        let currentRankDir = 'leaders'; // 'leaders' or 'laggards'
 
-        function setRankScope(scope) {{
-            currentRankScope = scope;
-            const btnMid = document.getElementById('btn-scope-mid');
-            const btnSub = document.getElementById('btn-scope-sub');
-            if (btnMid) btnMid.classList.toggle('active', scope === 'mid');
-            if (btnSub) btnSub.classList.toggle('active', scope === 'sub');
-            renderSubRankTable();
-        }}
+    # 7. Write complete updated HTML dashboard to file
+    print(f"Writing updated HTML dashboard: {REPORT_HTML}")
+    if os.path.exists(REPORT_HTML):
+        with open(REPORT_HTML, "r", encoding="utf-8") as f:
+            base_html = f.read()
+            
+        grid_start_tag = '<main class="master-grid">'
+        idx_grid_start = base_html.find(grid_start_tag)
+        main_end_tag = '</main>'
+        idx_main_end = base_html.find(main_end_tag, idx_grid_start)
+        payload_tag = 'const payload = '
+        idx_payload = base_html.find(payload_tag, idx_main_end)
+        idx_payload_end = base_html.find(';\n', idx_payload)
+        if idx_payload_end == -1:
+            idx_payload_end = base_html.find(';', idx_payload)
+            
+        if idx_grid_start != -1 and idx_main_end != -1 and idx_payload != -1 and idx_payload_end != -1:
+            header_part = base_html[:idx_grid_start + len(grid_start_tag)] + "\n"
+            middle_part = "\n" + base_html[idx_main_end:idx_payload + len(payload_tag)]
+            footer_part = base_html[idx_payload_end:]
+            
+            final_html = header_part + "".join(grid_html) + middle_part + cat_averages_json + footer_part
+            with open(REPORT_HTML, "w", encoding="utf-8") as f:
+                f.write(final_html)
+            print("HTML dashboard generated and saved successfully!")
+        else:
+            print(f"⚠️ Template placeholders not found in {REPORT_HTML}, HTML update skipped.")
+    else:
+        print(f"⚠️ Base HTML file {REPORT_HTML} not found.")
 
-        function setRankDir(dir) {{
-            currentRankDir = dir;
-            const btnLeaders = document.getElementById('btn-dir-leaders');
-            const btnLaggards = document.getElementById('btn-dir-laggards');
-            if (btnLeaders) btnLeaders.classList.toggle('active', dir === 'leaders');
-            if (btnLaggards) btnLaggards.classList.toggle('active', dir === 'laggards');
-            renderSubRankTable();
-        }}
+run_pipeline()
 
-        function switchSubRank(tab) {{
-            renderSubRankTable();
-        }}
-
-        let currentFlowTab = 'inflow';
-        
-        function setFlowTab(tab) {{
-            currentFlowTab = tab;
-            const btnInflow = document.getElementById('btn-flow-inflow');
-            const btnOutflow = document.getElementById('btn-flow-outflow');
-            const btnRisers = document.getElementById('btn-flow-risers');
-            if (btnInflow) btnInflow.classList.toggle('active', tab === 'inflow');
-            if (btnOutflow) btnOutflow.classList.toggle('active', tab === 'outflow');
-            if (btnRisers) btnRisers.classList.toggle('active', tab === 'risers');
-            
-            renderFlowTable();
-        }}
-        
-        function renderFlowTable() {{
-            const tbody = document.getElementById('flow-table-body');
-            const headerMetric = document.getElementById('flow-header-metric');
-            if (!tbody || !headerMetric) return;
-            tbody.innerHTML = '';
-            
-            const pData = payload[currentPeriod];
-            if (!pData) return;
-            
-            if (currentFlowTab === 'inflow') {{
-                headerMetric.innerText = '比重 (量能比)';
-                const list = pData.capital_inflow || [];
-                if (list.length === 0) {{
-                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">今日無放量流入族群</td></tr>';
-                    return;
-                }}
-                list.forEach(r => {{
-                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
-                    tbody.innerHTML += `
-                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
-                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
-                            <td>${{r.share.toFixed(1)}}% (${{r.ver.toFixed(1)}}x)</td>
-                            <td class="${{classColor}}">+${{r.avg_change.toFixed(2)}}%</td>
-                        </tr>
-                    `;
-                }});
-            }} else if (currentFlowTab === 'outflow') {{
-                headerMetric.innerText = '比重 (量能比)';
-                const list = pData.capital_outflow || [];
-                if (list.length === 0) {{
-                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">今日無放量流出族群</td></tr>';
-                    return;
-                }}
-                list.forEach(r => {{
-                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
-                    tbody.innerHTML += `
-                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
-                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
-                            <td>${{r.share.toFixed(1)}}% (${{r.ver.toFixed(1)}}x)</td>
-                            <td class="${{classColor}}">${{r.avg_change.toFixed(2)}}%</td>
-                        </tr>
-                    `;
-                }});
-            }} else if (currentFlowTab === 'risers') {{
-                headerMetric.innerText = '收紅天數 (量能比)';
-                if (currentPeriod === '1d') {{
-                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;font-size:0.8rem;">🐢 默默緩漲指標不支援 1D 頁籤<br/>請點擊上方切換為 5D 或 10D 查看</td></tr>';
-                    return;
-                }}
-                const list = pData.quiet_risers || [];
-                if (list.length === 0) {{
-                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:10px 0;">期間無符合緩漲特徵之族群</td></tr>';
-                    return;
-                }}
-                list.forEach(r => {{
-                    const classColor = r.avg_change >= 0 ? 'up' : 'down';
-                    const pctDays = (r.tci * 100).toFixed(0);
-                    tbody.innerHTML += `
-                        <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群" style="cursor:pointer;">
-                            <td><strong>${{r.mid_cat}}</strong><br/><span style="font-size:0.7rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
-                            <td>${{pctDays}}% (${{r.ver.toFixed(1)}}x)</td>
-                            <td class="${{classColor}}">+${{r.avg_change.toFixed(2)}}%</td>
-                        </tr>
-                    `;
-                }});
-            }}
-        }}
-
-        function renderSubRankTable() {{
-            const listKey = currentRankScope + '_' + currentRankDir;
-            const list = (payload[currentPeriod] && payload[currentPeriod][listKey]) || [];
-            const tbody = document.getElementById('sub-rank-table-body');
-            if (!tbody) return;
-            tbody.innerHTML = '';
-            
-            list.forEach(r => {{
-                const classColor = r.avg_change >= 0 ? 'up' : 'down';
-                const sign = r.avg_change >= 0 ? '+' : '';
-                const catName = r.mid_cat || r.sub_cat;
-                
-                tbody.innerHTML += `
-                    <tr onclick="focusSubSection('${{r.safe_id}}')" title="點擊展開並捲動定位到該族群">
-                        <td><strong>${{catName}}</strong><br/><span style="font-size:0.75rem;color:var(--text-secondary);">${{r.main_cat}}</span></td>
-                        <td class="${{classColor}}">${{sign}}${{r.avg_change.toFixed(2)}}%</td>
-                        <td><span class="tag">${{r.count}} 檔</span></td>
-                    </tr>
-                `;
-            }});
-        }}
-        
-        // Focus and scroll to sub-sector / mid-cluster section row
-        function focusSubSection(subSafeId) {{
-            let section = document.getElementById(subSafeId);
-            
-            // Fallback: if ID not found, try searching all sub-sections
-            if (!section) {{
-                const allSections = document.querySelectorAll('.sub-section');
-                for (const s of allSections) {{
-                    if (s.id && s.id === subSafeId) {{
-                        section = s;
-                        break;
-                    }}
-                }}
-            }}
-            
-            if (!section) {{
-                console.warn('focusSubSection: could not find element with id:', subSafeId);
-                return;
-            }}
-            
-            // Expand parent main card if collapsed
-            const mainCard = section.closest('.main-card');
-            if (mainCard) {{
-                const list = mainCard.querySelector('.sub-category-list');
-                const arrow = mainCard.querySelector('.toggle-main-arrow');
-                if (list && (list.style.display === 'none' || list.style.display === '')) {{
-                    list.style.display = 'flex';
-                    if (arrow) arrow.innerText = '▼';
-                }}
-            }}
-            
-            // Expand mid-content if collapsed
-            const midContent = section.querySelector('.mid-content');
-            const arrow = section.querySelector('.toggle-arrow');
-            if (midContent && (midContent.style.display === 'none' || midContent.style.display === '')) {{
-                midContent.style.display = 'flex';
-                if (arrow) arrow.innerText = '▼';
-            }}
-            
-            // Now scroll to it!
-            setTimeout(() => {{
-                section.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-            }}, 100);
-            
-            // Flash border to draw attention
-            section.style.borderColor = 'var(--primary-accent)';
-            section.style.boxShadow = '0 0 15px rgba(99, 102, 241, 0.4)';
-            setTimeout(() => {{
-                section.style.borderColor = 'rgba(255, 255, 255, 0.02)';
-                section.style.boxShadow = 'none';
-            }}, 2000);
-        }}
-        
-        // Treemap node click interaction -> Zoom in/out natively for categories. Focus & scroll only for leaf stocks.
-        treemapChart.on('click', function (params) {{
-            if (params.data && params.data.name && params.data.ticker) {{
-                const cleanName = params.data.name.split(/\\n| \\(/)[0].trim();
-                focusStock(cleanName);
-            }}
-        }});
-        
-        // Initial load
-        switchPeriod('1d');
-        
-        // Handle window resizing
-        window.addEventListener('resize', function() {{
-            treemapChart.resize();
-        }});
-    </script>
-</body>
-</html>
-"""
-    
-    with open(REPORT_HTML, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print(f"Combined Master Dashboard with Treemap generated successfully.")
-    print("=" * 60)
-    print("🎉 Pipeline Completed Successfully!")
-    print(f"- Summary Report: {REPORT_MD}")
-    print(f"- Combined Dashboard: {REPORT_HTML}")
-    print("=" * 60)
-
-if __name__ == "__main__":
-    run_pipeline()

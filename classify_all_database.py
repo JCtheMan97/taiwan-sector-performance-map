@@ -11,6 +11,7 @@ REPORT_MD = "daily_sector_performance.md"
 REPORT_HTML = "daily_sector_performance.html"
 
 STOCK_SUBCLASS = {
+    "駿吉-KY": ("工具機與零組件", "金屬加工與手工具"),
     '91APP*-KY': ('軟體與資訊服務', '軟體 - 行動與數位行銷服務'),
     'ABC-KY': ('生技醫療', '生技醫療 - 醫療儀器與檢測設備'),
     'AES-KY': ('伺服器、電腦與工業電腦', 'AI伺服器 BBU 備用電池龍頭'),
