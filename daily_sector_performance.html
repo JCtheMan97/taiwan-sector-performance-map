@@ -379,22 +379,24 @@
     
         
         /* Limit Up / Limit Down Glow Animation & Border Styles */
-        .stock-pill.limit-up {
-            border: 2px solid #ef4444 !important;
-            box-shadow: 0 0 10px rgba(239, 68, 68, 0.9) !important;
-            animation: pulse-red 2s infinite alternate;
+                .stock-pill.limit-up {
+            border: 2px solid #ff3b30 !important;
+            box-shadow: 0 0 16px rgba(255, 59, 48, 0.95), inset 0 0 6px rgba(255, 59, 48, 0.6) !important;
+            animation: pulse-red 1.2s infinite alternate !important;
         }
         .stock-pill.limit-down {
-            border: 2px solid #10b981 !important;
-            box-shadow: 0 0 10px rgba(16, 185, 129, 0.9) !important;
-            animation: pulse-green 2s infinite alternate;
+            border: 2px solid #34c759 !important;
+            box-shadow: 0 0 16px rgba(52, 199, 89, 0.95), inset 0 0 6px rgba(52, 199, 89, 0.6) !important;
+            animation: pulse-green 1.2s infinite alternate !important;
         }
         @keyframes pulse-red {
-            0% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.6); }
-            100% { box-shadow: 0 0 14px rgba(239, 68, 68, 1.0); }
+            0% { box-shadow: 0 0 6px rgba(255, 59, 48, 0.6), inset 0 0 3px rgba(255, 59, 48, 0.3); }
+            100% { box-shadow: 0 0 24px rgba(255, 59, 48, 1.0), inset 0 0 12px rgba(255, 59, 48, 0.8); }
         }
         @keyframes pulse-green {
-            0% { box-shadow: 0 0 4px rgba(16, 185, 129, 0.6); }
+            0% { box-shadow: 0 0 6px rgba(52, 199, 89, 0.6), inset 0 0 3px rgba(52, 199, 89, 0.3); }
+            100% { box-shadow: 0 0 24px rgba(52, 199, 89, 1.0), inset 0 0 12px rgba(52, 199, 89, 0.8); }
+        }
             100% { box-shadow: 0 0 14px rgba(16, 185, 129, 1.0); }
         }
 
@@ -39634,14 +39636,17 @@
                 toggleAll(false);
                 pills.forEach(pill => {
                     pill.style.opacity = "1";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
+                    pill.style.border = "";
+                    pill.style.boxShadow = "";
                 });
                 // Restore Treemap
-                treemapChart.setOption({
-                    series: [{
-                        data: payload[currentPeriod].treemap
-                    }]
-                });
+                if (window.treemapChart) {
+                    treemapChart.setOption({
+                        series: [{
+                            data: payload[currentPeriod].treemap
+                        }]
+                    });
+                }
                 return;
             }
             
@@ -39651,21 +39656,22 @@
             // Check if there is an exact match for the query
             let hasExactMatch = false;
             pills.forEach(pill => {
-                const name = pill.getAttribute('data-name').trim().toLowerCase();
-                const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
+                const name = (pill.getAttribute('data-name') || '').trim().toLowerCase();
+                const ticker = (pill.getAttribute('data-ticker') || '').trim().toLowerCase();
                 if (name === query || ticker === query) {
                     hasExactMatch = true;
                 }
             });
             
-            const matchedCardIds = new Set();
             const matchedTickers = new Set();
+            let firstMatchPill = null;
             
             pills.forEach(pill => {
-                const name = pill.getAttribute('data-name').trim().toLowerCase();
-                const ticker = pill.getAttribute('data-ticker').trim().toLowerCase();
+                const name = (pill.getAttribute('data-name') || '').trim().toLowerCase();
+                const ticker = (pill.getAttribute('data-ticker') || '').trim().toLowerCase();
                 const mainCat = (pill.getAttribute('data-main-cat') || '').trim().toLowerCase();
                 const subCat = (pill.getAttribute('data-sub-cat') || '').trim().toLowerCase();
+                const midCat = (pill.getAttribute('data-mid-cat') || '').trim().toLowerCase();
                 
                 let isMatch = false;
                 if (hasExactMatch) {
@@ -39674,76 +39680,43 @@
                     isMatch = (name.includes(query) || 
                                ticker.includes(query) || 
                                mainCat.includes(query) || 
+                               midCat.includes(query) || 
                                subCat.includes(query));
                 }
                 
                 if (isMatch) {
-                    pill.style.opacity = "1";
-                    pill.style.border = "2px solid var(--primary-accent)";
+                    if (!firstMatchPill) firstMatchPill = pill;
                     matchedTickers.add(ticker);
                     
-                    const parentGrid = pill.closest('.stock-grid');
-                    if (parentGrid) {
-                        parentGrid.style.display = 'grid';
-                        
-                        // Expand mid level
-                        const midContent = parentGrid.closest('.mid-content');
-                        if (midContent) {
-                            midContent.style.display = 'flex';
-                            const subSection = midContent.closest('.sub-section');
-                            if (subSection) {
-                                const arrow = subSection.querySelector('.toggle-arrow');
-                                if (arrow) arrow.innerText = '▼';
-                            }
-                        }
-                        
-                        // Expand sub level
-                        const subSubSection = parentGrid.closest('.sub-sub-section');
-                        if (subSubSection) {
-                            const subArrow = subSubSection.querySelector('.toggle-sub-arrow');
-                            if (subArrow) subArrow.innerText = '▼';
-                        }
-                    }
+                    // Auto-expand ALL parent and child folders down to this pill!
+                    expandAllFoldersForElement(pill);
                     
-                    const mainCard = pill.closest('.main-card');
-                    if (mainCard) {
-                        matchedCardIds.add(mainCard.id);
-                        mainCard.querySelector('.sub-category-list').style.display = 'flex';
-                        const mainArrow = mainCard.querySelector('.toggle-main-arrow');
-                        if (mainArrow) mainArrow.innerText = '▼';
-                    }
+                    pill.style.opacity = "1";
+                    pill.style.border = "2px solid #ff9f43";
+                    pill.style.boxShadow = "0 0 10px rgba(255, 159, 67, 0.6)";
                 } else {
-                    pill.style.opacity = "0.15";
-                    pill.style.border = "1px solid rgba(255, 255, 255, 0.04)";
+                    pill.style.opacity = "0.2";
+                    pill.style.border = "";
+                    pill.style.boxShadow = "";
                 }
             });
             
-            // Reorder and hide cards
-            cards.forEach(card => {
-                if (matchedCardIds.has(card.id)) {
-                    card.style.display = 'block';
-                    const mInfo = Object.values(payload[currentPeriod].main_gp).find(m => m.safe_id === card.id);
-                    if (mInfo) {
-                        card.style.order = mInfo.rank - 1000; // Float to the absolute top!
-                    }
-                } else {
-                    card.style.display = 'none'; // Hide non-matching sectors!
-                }
-            });
-            
-            // Scroll to the top of the heatmap section smoothly
-            const gridContainer = document.querySelector('.master-grid');
-            if (gridContainer) {
-                gridContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Smooth scroll to the first matched stock pill
+            if (firstMatchPill) {
+                setTimeout(() => {
+                    firstMatchPill.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 100);
             }
             
-            // Update Treemap
-            const filteredTreemapData = getFilteredTreemap(payload[currentPeriod].treemap, matchedTickers);
-            treemapChart.setOption({
-                series: [{
-                    data: filteredTreemapData
-                }]
-            });
+            // Filter Treemap synchronously
+            if (window.treemapChart) {
+                const filteredData = getFilteredTreemap(payload[currentPeriod].treemap, matchedTickers);
+                treemapChart.setOption({
+                    series: [{
+                        data: filteredData
+                    }]
+                });
+            }
         }
         
         // Bulk analysis functions
@@ -40347,12 +40320,66 @@
         }
         
         // Focus and scroll to sub-sector / mid-cluster section row
+        // Helper: Automatically expand all parent AND child folders down to smallest stock-grid
+        function expandAllFoldersForElement(targetEl) {
+            if (!targetEl) return;
+            
+            // 1. If targetEl is a stock pill
+            if (targetEl.classList && targetEl.classList.contains('stock-pill')) {
+                targetEl.style.display = 'flex';
+                targetEl.style.opacity = '1';
+            }
+            
+            // 2. Expand all descendant sub-sub-sections and stock-grids if targetEl is a folder
+            const subSubs = targetEl.querySelectorAll ? targetEl.querySelectorAll('.sub-sub-section') : [];
+            subSubs.forEach(ss => {
+                ss.style.display = 'block';
+                const g = ss.querySelector('.stock-grid');
+                if (g) g.style.display = 'grid';
+                const arr = ss.querySelector('.toggle-sub-arrow');
+                if (arr) arr.innerText = '▼';
+            });
+            
+            const grids = targetEl.querySelectorAll ? targetEl.querySelectorAll('.stock-grid') : [];
+            grids.forEach(g => {
+                g.style.display = 'grid';
+            });
+            
+            // 3. Traverse UPWARDS to expand all parent containers
+            let curr = targetEl;
+            while (curr && curr !== document.body) {
+                if (curr.classList && curr.classList.contains('sub-sub-section')) {
+                    curr.style.display = 'block';
+                    const g = curr.querySelector('.stock-grid');
+                    if (g) g.style.display = 'grid';
+                    const arr = curr.querySelector('.toggle-sub-arrow');
+                    if (arr) arr.innerText = '▼';
+                }
+                
+                if (curr.classList && curr.classList.contains('sub-section')) {
+                    curr.style.display = 'block';
+                    const midContent = curr.querySelector('.mid-content');
+                    if (midContent) midContent.style.display = 'flex';
+                    const arr = curr.querySelector('.toggle-arrow');
+                    if (arr) arr.innerText = '▼';
+                }
+                
+                if (curr.classList && curr.classList.contains('main-card')) {
+                    curr.style.display = 'block';
+                    const list = curr.querySelector('.sub-category-list');
+                    if (list) list.style.display = 'flex';
+                    const arr = curr.querySelector('.toggle-main-arrow');
+                    if (arr) arr.innerText = '▼';
+                }
+                
+                curr = curr.parentElement;
+            }
+        }
+
         function focusSubSection(subSafeId) {
             let section = document.getElementById(subSafeId);
-            
-            // Fallback: if ID not found, try searching all sub-sections
             if (!section) {
-                const allSections = document.querySelectorAll('.sub-section');
+                const allSections = document.querySelectorAll('.sub-section, .sub-sub-section, .main-card');
                 for (const s of allSections) {
                     if (s.id && s.id === subSafeId) {
                         section = s;
@@ -40366,37 +40393,57 @@
                 return;
             }
             
-            // Expand parent main card if collapsed
-            const mainCard = section.closest('.main-card');
-            if (mainCard) {
-                const list = mainCard.querySelector('.sub-category-list');
-                const arrow = mainCard.querySelector('.toggle-main-arrow');
-                if (list && (list.style.display === 'none' || list.style.display === '')) {
-                    list.style.display = 'flex';
-                    if (arrow) arrow.innerText = '▼';
-                }
-            }
+            // Auto expand all parent and child folders down to smallest grid!
+            expandAllFoldersForElement(section);
             
-            // Expand mid-content if collapsed
-            const midContent = section.querySelector('.mid-content');
-            const arrow = section.querySelector('.toggle-arrow');
-            if (midContent && (midContent.style.display === 'none' || midContent.style.display === '')) {
-                midContent.style.display = 'flex';
-                if (arrow) arrow.innerText = '▼';
-            }
-            
-            // Now scroll to it!
+            // Smooth scroll to section
             setTimeout(() => {
                 section.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 100);
             
-            // Flash border to draw attention
-            section.style.borderColor = 'var(--primary-accent)';
-            section.style.boxShadow = '0 0 15px rgba(99, 102, 241, 0.4)';
+            // High-contrast glowing highlight
+            const origBorder = section.style.borderColor;
+            const origShadow = section.style.boxShadow;
+            section.style.transition = 'all 0.3s ease';
+            section.style.borderColor = '#ff9f43';
+            section.style.boxShadow = '0 0 25px rgba(255, 159, 67, 0.8)';
             setTimeout(() => {
-                section.style.borderColor = 'rgba(255, 255, 255, 0.02)';
-                section.style.boxShadow = 'none';
-            }, 2000);
+                section.style.borderColor = origBorder;
+                section.style.boxShadow = origShadow;
+            }, 2500);
+        }
+
+        function focusStock(stockName) {
+            const queryInput = document.getElementById('search-input');
+            if (queryInput) queryInput.value = stockName;
+            
+            const pills = document.querySelectorAll('.stock-pill');
+            let targetPill = null;
+            for (let pill of pills) {
+                if (pill.getAttribute('data-name') === stockName || pill.getAttribute('data-ticker') === stockName) {
+                    targetPill = pill;
+                    break;
+                }
+            }
+            
+            if (targetPill) {
+                expandAllFoldersForElement(targetPill);
+                
+                targetPill.style.transition = 'all 0.3s ease';
+                targetPill.style.border = '3px solid #ff9f43';
+                targetPill.style.boxShadow = '0 0 20px #ff9f43';
+                
+                setTimeout(() => {
+                    targetPill.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 120);
+                
+                setTimeout(() => {
+                    targetPill.style.border = '';
+                    targetPill.style.boxShadow = '';
+                }, 3000);
+            } else {
+                searchStocks();
+            }
         }
         
         // Treemap node click interaction -> Zoom in/out natively for categories. Focus & scroll only for leaf stocks.
