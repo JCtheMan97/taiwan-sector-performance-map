@@ -32,21 +32,27 @@ def fetch_twse_institutional(date_str):
             trust_net = parse_num(row[10]) // 1000
             dealer_net = parse_num(row[11]) // 1000
             result[ticker] = {"foreign": foreign_net, "trust": trust_net, "dealer": dealer_net, "total": foreign_net + trust_net + dealer_net}
-        print(f"[TWSE] Downloaded {len(result)} stocks")
+        print(f"[TWSE] Downloaded {len(result)} stocks for {date_str}")
         return result
     except Exception as e:
         print(f"[TWSE] Error: {e}")
         return {}
 
 def fetch_tpex_institutional(date_str):
-    url = "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&response=json"
+    try:
+        roc_year = int(date_str[:4]) - 1911
+        roc_date = f"{roc_year}/{date_str[4:6]}/{date_str[6:]}"
+    except:
+        roc_date = date_str
+    
+    url = f"https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?date={roc_date}&type=Daily&response=json"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, verify=False, timeout=10)
         data = res.json()
         tables = data.get("tables", [])
         result = {}
-        if tables and tables[0].get("data"):
+        if tables and len(tables) > 0 and tables[0].get("data"):
             for row in tables[0]["data"]:
                 ticker = row[0].strip()
                 def parse_num(v):
@@ -56,20 +62,24 @@ def fetch_tpex_institutional(date_str):
                 trust_net = parse_num(row[7]) // 1000 if len(row) > 7 else 0
                 dealer_net = parse_num(row[10]) // 1000 if len(row) > 10 else 0
                 result[ticker] = {"foreign": foreign_net, "trust": trust_net, "dealer": dealer_net, "total": foreign_net + trust_net + dealer_net}
-        print(f"[TPEX] Downloaded {len(result)} stocks")
+        print(f"[TPEX] Downloaded {len(result)} stocks for {date_str}")
         return result
     except Exception as e:
         print(f"[TPEX] Error: {e}")
         return {}
 
-def get_institutional_data():
-    today_str = get_latest_trading_date_str()
+def get_institutional_data(target_date_str=None):
+    if not target_date_str:
+        today_str = get_latest_trading_date_str()
+    else:
+        today_str = str(target_date_str).replace("-", "")
+        
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 cache = json.load(f)
                 if cache.get("date") == today_str and cache.get("data") and len(cache.get("data")) > 1500:
-                    print(f"[Cache] Loaded {today_str} data ({len(cache['data'])} stocks)")
+                    print(f"[Cache] Loaded {today_str} institutional data ({len(cache['data'])} stocks)")
                     return cache["data"]
         except Exception as e: pass
 

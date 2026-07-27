@@ -268,11 +268,6 @@ def get_categories(name, data, ticker):
 
 def run_pipeline():
     global inst_data
-    try:
-        inst_data = get_institutional_data()
-    except Exception as e:
-        print(f"⚠️ Institutional fetch skipped: {e}")
-        inst_data = {}
     print("=" * 60)
     print("🚀 Starting Daily Sector Performance Tracker & Dashboard")
     print("=" * 60)
@@ -445,6 +440,12 @@ def run_pipeline():
     date_str = str(valid_df.index[-1].date())
     prev_date_str = str(valid_df.index[-2].date())
     print(f"Trading date: {date_str}. Total valid trading days loaded: {num_days}.")
+    
+    try:
+        inst_data = get_institutional_data(date_str)
+    except Exception as e:
+        print(f"⚠️ Institutional fetch skipped: {e}")
+        inst_data = {}
     
     # Calculate returns vectorised for 1D, 5D, 10D, and 20D
     change_1d = ((valid_df.iloc[-1] - valid_df.iloc[-2]) / valid_df.iloc[-2]) * 100
@@ -1090,6 +1091,11 @@ def run_pipeline():
             
         if idx_grid_start != -1 and idx_main_end != -1 and idx_payload != -1 and idx_payload_end != -1:
             header_part = base_html[:idx_grid_start + len(grid_start_tag)] + "\n"
+            
+            # Dynamically update top-left subtitle date!
+            new_subtitle = f'<p class="subtitle">統計日期 : {date_str} (相較於前一交易日 {prev_date_str}) | 跨週期產業板塊熱力圖</p>'
+            header_part = re.sub(r'<p class="subtitle">統計日期\s*:[^<]+</p>', new_subtitle, header_part)
+            
             middle_part = "\n" + base_html[idx_main_end:idx_payload + len(payload_tag)]
             footer_part = base_html[idx_payload_end:]
             
