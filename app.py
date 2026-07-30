@@ -105,29 +105,38 @@ def run_update(ignore_cooldown=False):
     return success
 
 # ── Auto-update decision logic ───────────────────────────────────────────────
-# Compare ACTUAL DATA DATE (from the MD file) with today's Taiwan date.
-is_locked = os.path.exists(lock_file)
-past_close = now_tw.hour >= 14  # After 14:00 Taiwan time (market closed)
+def get_expected_latest_trading_date(now_dt):
+    """Calculates the date of the latest expected TWSE/TPEX trading session.
+    Market closes at 13:30 TW Time, data fully available after 14:00.
+    """
+    dt = now_dt
+    if dt.hour < 14:
+        dt = dt - timedelta(days=1)
+    
+    # Roll back weekends (Saturday=5, Sunday=6) to Friday
+    while dt.weekday() >= 5:
+        dt = dt - timedelta(days=1)
+        
+    return dt.date()
 
+expected_trading_date = get_expected_latest_trading_date(now_tw)
+is_locked = os.path.exists(lock_file)
+
+# Compare ACTUAL DATA DATE with EXPECTED LATEST TRADING DATE
 is_data_stale = False
 if data_date is None:
     is_data_stale = True
-elif data_date < today_tw:
-    if now_tw.weekday() < 5 and past_close:
-        # Weekday AND past 14:00 → today's close data should be available
-        is_data_stale = True
-    elif (now_tw - last_update_dt).total_seconds() > 16 * 3600:
-        # Or it's been more than 16 hours regardless
-        is_data_stale = True
+elif data_date < expected_trading_date:
+    is_data_stale = True
 
 # Cooldown limits:
-# - If data is ALREADY updated to today (data_date == today_tw): 10 minutes (600s) cooldown.
-# - If data is STALE (data_date < today_tw): 60 seconds retry lock (to prevent rapid looping on errors).
+# - If data is ALREADY up-to-date: 10 minutes (600s) cooldown.
+# - If data is STALE: 60 seconds retry lock (to prevent rapid looping on errors).
 cooldown_limit = min_interval_seconds if not is_data_stale else 60
 is_in_cooldown = time_since_update < cooldown_limit
 
 if is_data_stale and not is_locked and not is_in_cooldown:
-    st.info(f"🔄 偵測到有最新的台股收盤數據（目前資料日期：{data_date}），系統正在自動更新看板中，請稍候約 1-2 分鐘...")
+    st.info(f"🔄 偵測到最新交易日數據（目前資料日期：{data_date}，最新應為：{expected_trading_date}），系統正在自動更新看板中，請稍候約 1-2 分鐘...")
     if run_update(ignore_cooldown=True):
         st.rerun()
 
