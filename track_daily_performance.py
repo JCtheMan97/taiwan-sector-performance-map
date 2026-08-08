@@ -1073,7 +1073,7 @@ def run_pipeline():
         """)
         grid_html.append("".join(main_html))
 
-    # 7. Write complete updated HTML dashboard to file
+        # 7. Write complete updated HTML dashboard to file
     print(f"Writing updated HTML dashboard: {REPORT_HTML}")
     if os.path.exists(REPORT_HTML):
         with open(REPORT_HTML, "r", encoding="utf-8") as f:
@@ -1082,19 +1082,23 @@ def run_pipeline():
         grid_start_tag = '<main class="master-grid">'
         idx_grid_start = base_html.find(grid_start_tag)
         main_end_tag = '</main>'
-        idx_main_end = base_html.find(main_end_tag, idx_grid_start)
+        idx_main_end = base_html.find(main_end_tag, idx_grid_start if idx_grid_start != -1 else 0)
+        
         payload_tag = 'const payload = '
-        idx_payload = base_html.find(payload_tag, idx_main_end)
-        idx_payload_end = base_html.find(';\n', idx_payload)
-        if idx_payload_end == -1:
-            idx_payload_end = base_html.find(';', idx_payload)
+        idx_payload = base_html.find(payload_tag)
+        
+        idx_payload_end = -1
+        if idx_payload != -1:
+            idx_payload_end = base_html.find(';\n', idx_payload)
+            if idx_payload_end == -1:
+                idx_payload_end = base_html.find(';', idx_payload)
             
         if idx_grid_start != -1 and idx_main_end != -1 and idx_payload != -1 and idx_payload_end != -1:
             header_part = base_html[:idx_grid_start + len(grid_start_tag)] + "\n"
             
             # Dynamically update top-left subtitle date!
-            new_subtitle = f'<p class="subtitle">統計日期 : {date_str} (相較於前一交易日 {prev_date_str}) | 跨週期產業板塊熱力圖</p>'
-            header_part = re.sub(r'<p class="subtitle">統計日期\s*:[^<]+</p>', new_subtitle, header_part)
+            new_subtitle = f'<p class="subtitle">統計日期：{date_str} (相較於前一交易日 {prev_date_str}) | 跨週期產業板塊熱力圖</p>'
+            header_part = re.sub(r'<p class="subtitle">統計日期[\s：:][^<]+</p>', new_subtitle, header_part)
             
             middle_part = "\n" + base_html[idx_main_end:idx_payload + len(payload_tag)]
             footer_part = base_html[idx_payload_end:]
@@ -1104,7 +1108,22 @@ def run_pipeline():
                 f.write(final_html)
             print("HTML dashboard generated and saved successfully!")
         else:
-            print(f"⚠️ Template placeholders not found in {REPORT_HTML}, HTML update skipped.")
+            print(f"⚠️ Template placeholders not found in {REPORT_HTML} (grid_start={idx_grid_start}, main_end={idx_main_end}, payload={idx_payload}, payload_end={idx_payload_end}). Attempting fallback regex replacement...")
+            
+            # Fallback regex replacement for master-grid content and payload
+            new_subtitle = f'<p class="subtitle">統計日期：{date_str} (相較於前一交易日 {prev_date_str}) | 跨週期產業板塊熱力圖</p>'
+            base_html = re.sub(r'<p class="subtitle">統計日期[\s：:][^<]+</p>', new_subtitle, base_html)
+            
+            # Replace <main class="master-grid"> ... </main>
+            grid_content = "".join(grid_html)
+            base_html = re.sub(r'<main class="master-grid">.*?</main>', f'<main class="master-grid">\n{grid_content}\n</main>', base_html, flags=re.DOTALL)
+            
+            # Replace const payload = ...;
+            base_html = re.sub(r'const payload = \{.*?\};', f'const payload = {cat_averages_json};', base_html, flags=re.DOTALL)
+            
+            with open(REPORT_HTML, "w", encoding="utf-8") as f:
+                f.write(base_html)
+            print("HTML dashboard updated using fallback regex successfully!")
     else:
         print(f"⚠️ Base HTML file {REPORT_HTML} not found.")
 

@@ -37,72 +37,39 @@ min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
 # Define Taiwan Timezone (UTC+8)
 tw_tz = timezone(timedelta(hours=8))
 
-# --- Helper: read ACTUAL data date from the markdown report ---
+# --- Helper: read ACTUAL data date from HTML and MD reports ---
 def get_data_date():
-    """Parse the statistics date from the first line of the MD report.
-    Returns a date object or None if the file is missing / unparseable.
+    """Parse statistics date from both HTML and MD reports.
+    Returns the date object or None. If HTML date is older than MD, returns the older date to force sync!
     """
-    if not os.path.exists(md_file_check):
-        return None
-    try:
-        with open(md_file_check, "r", encoding="utf-8") as f:
-            first_line = f.readline()
-        # Expected format:  # 📊 每日族群漲跌與資金流向看板 (2026-07-17)
-        m = re.search(r'\((\d{4}-\d{2}-\d{2})\)', first_line)
-        if m:
-            return datetime.strptime(m.group(1), '%Y-%m-%d').date()
-    except Exception:
-        pass
-    return None
-
-# Check last update time (file mtime – used for display and cooldown)
-now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
-last_update_dt = None
-if os.path.exists(html_file):
-    mtime = os.path.getmtime(html_file)
-    last_update_dt = datetime.fromtimestamp(mtime, tz=tw_tz)
-    last_update = last_update_dt.strftime('%Y-%m-%d %H:%M:%S')
-    time_since_update = (now_tw - last_update_dt).total_seconds()
-else:
-    last_update = "無歷史數據"
-    time_since_update = 999999
-
-# Actual data date (read from MD file – more reliable than file mtime)
-data_date = get_data_date()
-today_tw = now_tw.date()
-
-# Function to run the tracker pipeline
-def run_update(ignore_cooldown=False):
-    if os.path.exists(lock_file):
-        st.error("⚠️ 系統目前正由其他使用者更新中，請稍候再試。")
-        return False
-        
-    if not ignore_cooldown and time_since_update < min_interval_seconds:
-        st.warning(f"📊 數據在 10 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 Yahoo API 限制 IP。")
-        return False
-
-    # Create lock file
-    with open(lock_file, "w") as f:
-        now_tw = datetime.now(timezone.utc).astimezone(tw_tz)
-        f.write(str(now_tw))
-
-    success = False
-    try:
-        import sys
-        # Run the python script using the exact same python interpreter path
-        result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
-        if result.returncode == 0:
-            st.toast("數據已更新", icon="✅")
-            success = True
-        else:
-            st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
-    except Exception as e:
-        st.error(f"❌ 執行更新時發生錯誤: {e}")
-    finally:
-        # Remove lock file when finished
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-    return success
+    md_date = None
+    html_date = None
+    
+    # 1. Parse MD date
+    if os.path.exists(md_file_check):
+        try:
+            with open(md_file_check, "r", encoding="utf-8") as f:
+                first_line = f.readline()
+            m = re.search(r'\((\d{4}-\d{2}-\d{2})\)', first_line)
+            if m:
+                md_date = datetime.strptime(m.group(1), '%Y-%m-%d').date()
+        except Exception:
+            pass
+            
+    # 2. Parse HTML subtitle date
+    if os.path.exists(html_file):
+        try:
+            with open(html_file, "r", encoding="utf-8") as f:
+                content = f.read(10000)  # Read first 10k bytes
+            m = re.search(r'<p class="subtitle">統計日期[\s：:]*(\d{4}-\d{2}-\d{2})', content)
+            if m:
+                html_date = datetime.strptime(m.group(1), '%Y-%m-%d').date()
+        except Exception:
+            pass
+            
+    if html_date and md_date:
+        return min(html_date, md_date)  # Use the older date so any un-synced HTML forces a re-compile!
+    return html_date or md_date or None
 
 # ── Auto-update decision logic ───────────────────────────────────────────────
 def get_expected_latest_trading_date(now_dt):
