@@ -1073,10 +1073,11 @@ def run_pipeline():
         """)
         grid_html.append("".join(main_html))
 
-        # 7. Write complete updated HTML dashboard to file
+    # 7. Write complete updated HTML dashboard to file
     print(f"Writing updated HTML dashboard: {REPORT_HTML}")
-    if os.path.exists(REPORT_HTML):
-        with open(REPORT_HTML, "r", encoding="utf-8") as f:
+    source_html_path = REPORT_HTML if os.path.exists(REPORT_HTML) else ("template.html" if os.path.exists("template.html") else None)
+    if source_html_path:
+        with open(source_html_path, "r", encoding="utf-8") as f:
             base_html = f.read()
             
         grid_start_tag = '<main class="master-grid">'
