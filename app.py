@@ -104,10 +104,10 @@ def run_update(ignore_cooldown=False):
     success = False
     try:
         import sys
-        # Run the python script using the exact same python interpreter path
-        result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
+        with st.spinner("🚀 正在下載 1970+ 檔個股行情並運算各週期資金指標，約需 1-2 分鐘，請稍候..."):
+            result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
         if result.returncode == 0:
-            st.toast("數據已更新", icon="✅")
+            st.toast("✅ 數據已成功更新為最新收盤行情！", icon="🎉")
             success = True
         else:
             st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
@@ -144,16 +144,8 @@ if data_date is None:
 elif data_date < expected_trading_date:
     is_data_stale = True
 
-# Cooldown limits:
-# - If data is ALREADY up-to-date: 10 minutes (600s) cooldown.
-# - If data is STALE: 60 seconds retry lock (to prevent rapid looping on errors).
 cooldown_limit = min_interval_seconds if not is_data_stale else 60
 is_in_cooldown = time_since_update < cooldown_limit
-
-if is_data_stale and not is_locked and not is_in_cooldown:
-    st.info(f"🔄 偵測到最新交易日數據（目前資料日期：{data_date}，最新應為：{expected_trading_date}），系統正在自動更新看板中，請稍候約 1-2 分鐘...")
-    if run_update(ignore_cooldown=True):
-        st.rerun()
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
@@ -161,6 +153,9 @@ st.sidebar.header("👑 台股產業資金流向圖")
 data_date_str = data_date.strftime('%Y-%m-%d') if data_date else "未知"
 st.sidebar.write(f"📊 **資料統計日期：** `{data_date_str}`")
 st.sidebar.write(f"📅 **檔案更新時間：** `{last_update}`")
+
+if is_data_stale:
+    st.sidebar.warning(f"💡 目前資料為 `{data_date_str}`（最新交易日為 `{expected_trading_date}`）。若需抓取最新盤後收盤，請點擊下方按鈕更新。")
 
 # Render update button on sidebar based on system status
 if is_locked:
@@ -173,7 +168,7 @@ elif is_in_cooldown and is_data_stale:
     st.sidebar.warning("⏳ 剛嘗試更新過，請稍候 1 分鐘...")
     st.sidebar.button("🔄 1分鐘內已嘗試過", disabled=True, use_container_width=True, key="sb_btn_stale_retry")
 else:
-    btn_label = "🚀 競速下載最新數據" if is_data_stale else "🔄 刷新數據"
+    btn_label = "🚀 下載最新收盤數據" if is_data_stale else "🔄 刷新數據"
     btn_type = "primary" if is_data_stale else "secondary"
     if st.sidebar.button(btn_label, type=btn_type, use_container_width=True, key="sb_btn_active"):
         if run_update(ignore_cooldown=is_data_stale):
@@ -197,6 +192,8 @@ st.sidebar.markdown("""
 
 # Render the HTML directly on the main page (taking up the entire viewport)
 if os.path.exists(html_file):
+    if is_data_stale:
+        st.info(f"📊 目前看板展示資料日期：`{data_date_str}`（相較於最新交易日 `{expected_trading_date}`）。若需獲取最新盤後行情，請於左側側邊欄點擊【🚀 下載最新收盤數據】。")
     with open(html_file, "r", encoding="utf-8") as f:
         html_content = f.read()
     st.components.v1.html(html_content, height=2200, scrolling=True)
