@@ -40207,19 +40207,16 @@
                 }
             }
             
-            // 3. Update all Card Headers (Main categories and sub categories averages) and re-order cards
+            // 3. Update all Card Headers (Main categories and sub categories averages) with rank indicator
             if (pData.main_gp) {
                 for (const [mName, mInfo] of Object.entries(pData.main_gp)) {
                     const badge = document.getElementById("badge-" + mInfo.safe_id);
                     if (badge && typeof mInfo.avg === 'number' && !isNaN(mInfo.avg)) {
                         const sign = mInfo.avg >= 0 ? '+' : '';
-                        badge.innerText = `${sign}${mInfo.avg.toFixed(2)}%`;
+                        const rankLabel = mInfo.rank ? `#${mInfo.rank} ` : '';
+                        badge.innerText = `${rankLabel}${sign}${mInfo.avg.toFixed(2)}%`;
                         badge.style.backgroundColor = getIntensityColor(mInfo.avg, period);
                         badge.style.color = '#ffffff';
-                    }
-                    const card = document.getElementById(mInfo.safe_id);
-                    if (card) {
-                        card.style.order = mInfo.rank;
                     }
                 }
             }
@@ -40300,7 +40297,7 @@
                     },
                     breadcrumb: {
                         show: true,
-                        bottom: 45, // Move breadcrumb up to avoid overlapping with visualMap
+                        bottom: 45,
                         itemStyle: {
                             color: 'rgba(255, 255, 255, 0.1)',
                             textStyle: {
@@ -40349,7 +40346,7 @@
                     calculable: true,
                     orient: 'horizontal',
                     left: 'center',
-                    bottom: 5, // Positioned slightly above the bottom line
+                    bottom: 5,
                     inRange: {
                         color: ['#10b981', '#374151', '#ef4444']
                     },
@@ -40360,7 +40357,7 @@
                     }
                 }
             };
-            treemapChart.setOption(treemapOption);
+            treemapChart.setOption(treemapOption, false);
             
             // 5. Update Rank Tables
             switchRank(currentRankTab);
@@ -40375,28 +40372,30 @@
             const buttons = document.querySelectorAll('.rank-tab-btn');
             buttons.forEach(btn => btn.classList.remove('active'));
             if (tab === 'leaders') {
-                buttons[0].classList.add('active');
+                if (buttons[0]) buttons[0].classList.add('active');
             } else {
-                buttons[1].classList.add('active');
+                if (buttons[1]) buttons[1].classList.add('active');
             }
             
-            const list = payload[currentPeriod][tab];
+            const list = payload[currentPeriod] ? payload[currentPeriod][tab] : [];
             const tbody = document.getElementById('rank-table-body');
-            tbody.innerHTML = '';
+            if (!tbody || !list) return;
             
+            let rows = [];
             list.forEach(r => {
                 const classColor = r.change >= 0 ? 'up' : 'down';
                 const sign = r.change >= 0 ? '+' : '';
                 
-                tbody.innerHTML += `
+                rows.push(`
                     <tr onclick="focusStock('${r.name}')">
                         <td><code>${r.ticker}</code></td>
                         <td><strong>${r.name}</strong></td>
                         <td class="${classColor}">${sign}${r.change.toFixed(2)}%</td>
                         <td><span class="tag">${r.sub_cat}</span></td>
                     </tr>
-                `;
+                `);
             });
+            tbody.innerHTML = rows.join('');
         }
         
         let currentRankScope = 'mid'; // 'mid' or 'sub'

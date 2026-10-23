@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import re
+import time
 import subprocess
 from datetime import datetime, date, timezone, timedelta
 
@@ -17,14 +18,15 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .block-container {
-        padding-top: 2rem;
+        padding-top: 1.5rem;
         padding-bottom: 0rem;
-        padding-left: 0rem;
-        padding-right: 0rem;
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
     }
     iframe {
         border: none !important;
-        border-radius: 0px !important;
+        border-radius: 8px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -32,7 +34,7 @@ st.markdown("""
 html_file = "daily_sector_performance.html"
 md_file_check = "daily_sector_performance.md"
 lock_file = "update.lock"
-min_interval_seconds = 600  # 10 minutes cooldown to avoid rate-limiting
+min_interval_seconds = 300  # 5 minutes cooldown to avoid rate-limiting
 
 # Define Taiwan Timezone (UTC+8) and current Taiwan time
 tw_tz = timezone(timedelta(hours=8))
@@ -61,7 +63,7 @@ def get_data_date():
     if os.path.exists(html_file):
         try:
             with open(html_file, "r", encoding="utf-8") as f:
-                content = f.read(10000)  # Read first 10k bytes
+                content = f.read(10000)
             m = re.search(r'<p class="subtitle">統計日期[\s：:]*(\d{4}-\d{2}-\d{2})', content)
             if m:
                 html_date = datetime.strptime(m.group(1), '%Y-%m-%d').date()
@@ -69,7 +71,7 @@ def get_data_date():
             pass
             
     if html_date and md_date:
-        return min(html_date, md_date)  # Use the older date so any un-synced HTML forces a re-compile!
+        return min(html_date, md_date)
     return html_date or md_date or None
 
 # Check last update time (file mtime – used for display and cooldown)
@@ -86,40 +88,7 @@ else:
 # Actual data date (read from HTML / MD files)
 data_date = get_data_date()
 
-# Function to run the tracker pipeline
-def run_update(ignore_cooldown=False):
-    if os.path.exists(lock_file):
-        st.error("⚠️ 系統目前正由其他使用者更新中，請稍候再試。")
-        return False
-        
-    if not ignore_cooldown and time_since_update < min_interval_seconds:
-        st.warning(f"📊 數據在 10 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 Yahoo API 限制 IP。")
-        return False
-
-    # Create lock file
-    with open(lock_file, "w") as f:
-        now_tw_lock = datetime.now(timezone.utc).astimezone(tw_tz)
-        f.write(str(now_tw_lock))
-
-    success = False
-    try:
-        import sys
-        with st.spinner("🚀 正在下載 1970+ 檔個股行情並運算各週期資金指標，約需 1-2 分鐘，請稍候..."):
-            result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
-        if result.returncode == 0:
-            st.toast("✅ 數據已成功更新為最新收盤行情！", icon="🎉")
-            success = True
-        else:
-            st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
-    except Exception as e:
-        st.error(f"❌ 執行更新時發生錯誤: {e}")
-    finally:
-        # Remove lock file when finished
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-    return success
-
-# ── Auto-update decision logic ───────────────────────────────────────────────
+# Calculate expected latest trading date
 def get_expected_latest_trading_date(now_dt):
     """Calculates the date of the latest expected TWSE/TPEX trading session.
     Market closes at 13:30 TW Time, data fully available after 14:00.
@@ -135,43 +104,74 @@ def get_expected_latest_trading_date(now_dt):
     return dt.date()
 
 expected_trading_date = get_expected_latest_trading_date(now_tw)
-is_locked = os.path.exists(lock_file)
 
-# Compare ACTUAL DATA DATE with EXPECTED LATEST TRADING DATE
+# Check if data is stale
 is_data_stale = False
 if data_date is None:
     is_data_stale = True
 elif data_date < expected_trading_date:
     is_data_stale = True
 
-cooldown_limit = min_interval_seconds if not is_data_stale else 60
-is_in_cooldown = time_since_update < cooldown_limit
+# Clean stale lock file (> 5 minutes)
+if os.path.exists(lock_file):
+    try:
+        lock_mtime = os.path.getmtime(lock_file)
+        if (time.time() - lock_mtime) > 300:
+            os.remove(lock_file)
+    except Exception:
+        pass
+
+is_locked = os.path.exists(lock_file)
+
+# Function to run the tracker pipeline
+def run_update(ignore_cooldown=False):
+    if os.path.exists(lock_file):
+        st.error("⚠️ 系統目前正由其他程序更新中，請稍候 1-2 分鐘再試。")
+        return False
+        
+    if not ignore_cooldown and time_since_update < min_interval_seconds:
+        st.warning(f"📊 數據在 5 分鐘內已更新過（最後更新：{last_update}），請勿頻繁下載以免被 API 限制。")
+        return False
+
+    # Create lock file
+    with open(lock_file, "w") as f:
+        now_tw_lock = datetime.now(timezone.utc).astimezone(tw_tz)
+        f.write(str(now_tw_lock))
+
+    success = False
+    try:
+        import sys
+        result = subprocess.run([sys.executable, "track_daily_performance.py"], capture_output=True, text=True, encoding="utf-8")
+        if result.returncode == 0:
+            success = True
+        else:
+            st.error(f"❌ 數據更新失敗！\nError:\n{result.stderr}")
+    except Exception as e:
+        st.error(f"❌ 執行更新時發生錯誤: {e}")
+    finally:
+        if os.path.exists(lock_file):
+            try:
+                os.remove(lock_file)
+            except Exception:
+                pass
+    return success
 
 # Sidebar controls
 st.sidebar.header("👑 台股產業資金流向圖")
 
 data_date_str = data_date.strftime('%Y-%m-%d') if data_date else "未知"
-st.sidebar.write(f"📊 **資料統計日期：** `{data_date_str}`")
-st.sidebar.write(f"📅 **檔案更新時間：** `{last_update}`")
-
-if is_data_stale:
-    st.sidebar.warning(f"💡 目前資料為 `{data_date_str}`（最新交易日為 `{expected_trading_date}`）。若需抓取最新盤後收盤，請點擊下方按鈕更新。")
-
-# Render update button on sidebar based on system status
-if is_locked:
-    st.sidebar.warning("⚠️ 其他使用者正在更新中...")
-    st.sidebar.button("🔄 讀取中...", disabled=True, use_container_width=True, key="sb_btn_locked")
-elif is_in_cooldown and not is_data_stale:
-    st.sidebar.info("✅ 數據已是今日最新 (10分鐘內)")
-    st.sidebar.button("🔄 10分鐘內已更新過", disabled=True, use_container_width=True, key="sb_btn_frequent")
-elif is_in_cooldown and is_data_stale:
-    st.sidebar.warning("⏳ 剛嘗試更新過，請稍候 1 分鐘...")
-    st.sidebar.button("🔄 1分鐘內已嘗試過", disabled=True, use_container_width=True, key="sb_btn_stale_retry")
+if not is_data_stale:
+    st.sidebar.success(f"📊 **資料統計日期：** `{data_date_str}`（最新）")
 else:
-    btn_label = "🚀 下載最新收盤數據" if is_data_stale else "🔄 刷新數據"
-    btn_type = "primary" if is_data_stale else "secondary"
-    if st.sidebar.button(btn_label, type=btn_type, use_container_width=True, key="sb_btn_active"):
-        if run_update(ignore_cooldown=is_data_stale):
+    st.sidebar.warning(f"📊 **資料統計日期：** `{data_date_str}`（待同步）")
+
+st.sidebar.caption(f"📅 **檔案生成時間：** `{last_update}`")
+st.sidebar.caption(f"🎯 **目標最新交易日：** `{expected_trading_date}`")
+
+if not is_data_stale:
+    if st.sidebar.button("🔄 手動刷新最新數據", use_container_width=True, key="sb_refresh"):
+        if run_update(ignore_cooldown=True):
+            st.toast("✅ 數據已成功刷新！", icon="🎉")
             st.rerun()
 
 # Expandable sidebar for markdown report
@@ -184,28 +184,50 @@ if os.path.exists(md_file):
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
-### 💡 說明
-* 本看板整合 **ECharts 產業資金流向圖 (Treemap)** 與 **個股漲跌熱力圖 (Heatmap)**。
-* **ECharts Treemap** 區域大小代表市值，顏色代表漲跌。點擊可縮放、點擊個股可自動篩選下方個股熱力圖。
-* **批次分析** 可同時輸入多檔個股代碼，快速分析其在板塊中的分佈。
+### 💡 看板功能指引
+* **21 大核心產業與 81 個細分子族群**：全市場 2,045 檔標的精準分類，同族群連動一目瞭然。
+* **平滑週期切換 (1D / 5D / 10D / 20D)**：各板塊位置穩定不跳動，即時反映各週期漲跌排名與法人籌碼。
+* **ECharts Treemap 產業地圖**：區塊大小代表市值規模，顏色深淺代表資金漲跌強度。
 """)
 
-# Render the HTML directly on the main page (taking up the entire viewport)
-if os.path.exists(html_file):
-    if is_data_stale:
-        st.info(f"📊 目前看板展示資料日期：`{data_date_str}`（相較於最新交易日 `{expected_trading_date}`）。若需獲取最新盤後行情，請於左側側邊欄點擊【🚀 下載最新收盤數據】。")
+# ── Main Content Area ──
+# If data is stale, DO NOT show the old 7/27 data!
+# Automatically execute update with a clear loading status screen
+if is_data_stale and not st.session_state.get("force_view_stale", False):
+    st.title("👑 台股產業資金流向圖")
+    with st.status(f"🚀 正在自動更新至最新收盤數據（最新交易日：{expected_trading_date}）...", expanded=True) as status_box:
+        st.write(f"📊 檢測到本地快取日期為舊版 `{data_date_str}`，為確保數據即時性，即刻自動同步至最新收盤行情。")
+        st.write("⏳ 正在下載全市場 1,980+ 檔標的行情、運算 21 大產業與 81 個細分子板塊各週期指標與法人買賣超...")
+        st.write("💡 預計約需 1 ~ 2 分鐘，請稍候片刻...")
+        
+        update_success = run_update(ignore_cooldown=True)
+        if update_success:
+            status_box.update(label="✅ 最新收盤數據已同步完成！正在呈現最新看板...", state="complete")
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            status_box.update(label="⚠️ 自動更新暫時遇到問題", state="error")
+            st.error("行情數據伺服器連線異常或暫無資料，您可以點擊下方按鈕重新嘗試：")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 立即重新嘗試更新", type="primary", use_container_width=True):
+                    st.rerun()
+            with col2:
+                if os.path.exists(html_file):
+                    if st.button("👁️ 仍查看歷史快取看板", use_container_width=True):
+                        st.session_state["force_view_stale"] = True
+                        st.rerun()
+
+elif os.path.exists(html_file):
+    # Render fresh HTML directly with full screen height
     with open(html_file, "r", encoding="utf-8") as f:
         html_content = f.read()
-    st.components.v1.html(html_content, height=2200, scrolling=True)
+    st.components.v1.html(html_content, height=2400, scrolling=True)
+
 else:
-    st.warning("⚠️ 尚未生成 HTML 看板。")
-    st.info("💡 由於這是您第一次在雲端部署或尚未生成數據，請點擊下方按鈕開始拉取台股收盤行情：")
-    
-    if is_locked:
-        st.warning("⚠️ 系統目前正由其他使用者更新中，請稍候並重新整理網頁。")
-    elif is_in_cooldown:
-        st.info(f"📊 數據剛更新過（最後更新：{last_update}），請重新整理網頁載入。")
-    else:
-        if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True, key="main_btn_active"):
-            if run_update():
-                st.rerun()
+    # First time initialization if no HTML exists
+    st.title("👑 台股產業資金流向圖")
+    st.info("💡 尚未生成 HTML 看板，即刻為您拉取台股最新收盤行情：")
+    if st.button("🚀 立即下載數據並生成看板 (約需 1-2 分鐘)", type="primary", use_container_width=True, key="main_init_btn"):
+        if run_update(ignore_cooldown=True):
+            st.rerun()

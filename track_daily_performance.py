@@ -1075,7 +1075,7 @@ def run_pipeline():
 
     # 7. Write complete updated HTML dashboard to file
     print(f"Writing updated HTML dashboard: {REPORT_HTML}")
-    source_html_path = REPORT_HTML if os.path.exists(REPORT_HTML) else ("template.html" if os.path.exists("template.html") else None)
+    source_html_path = "template.html" if os.path.exists("template.html") else (REPORT_HTML if os.path.exists(REPORT_HTML) else None)
     if source_html_path:
         with open(source_html_path, "r", encoding="utf-8") as f:
             base_html = f.read()
@@ -1091,6 +1091,8 @@ def run_pipeline():
         idx_payload_end = -1
         if idx_payload != -1:
             idx_payload_end = base_html.find(';\n', idx_payload)
+            if idx_payload_end == -1:
+                idx_payload_end = base_html.find(';\r\n', idx_payload)
             if idx_payload_end == -1:
                 idx_payload_end = base_html.find(';', idx_payload)
             
